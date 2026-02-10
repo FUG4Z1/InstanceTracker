@@ -841,51 +841,72 @@ SlashCmdList["INSTANCETRACKER"] = function(msg)
 end
 
 ----------------------------------------------------------------------
--- Minimap button (simple, no LibDBIcon dependency)
+-- Minimap button (orbits the minimap edge properly)
 ----------------------------------------------------------------------
 local function CreateMinimapButton()
-    local btn = CreateFrame("Button", "InstanceTrackerMinimapBtn", Minimap)
-    btn:SetWidth(32)
-    btn:SetHeight(32)
-    btn:SetFrameStrata("MEDIUM")
-    btn:SetPoint("TOPLEFT", Minimap, "TOPLEFT", 2, -2)
-    btn:SetMovable(true)
-    btn:SetClampedToScreen(true)
+    -- Load saved angle or default to 220 degrees
+    local minimapAngle = InstanceTrackerDB.minimapAngle or 220
 
-    local icon = btn:CreateTexture(nil, "ARTWORK")
-    icon:SetWidth(20)
-    icon:SetHeight(20)
-    icon:SetPoint("CENTER")
+    local btn = CreateFrame("Button", "InstanceTrackerMinimapBtn", Minimap)
+    btn:SetWidth(31)
+    btn:SetHeight(31)
+    btn:SetFrameStrata("MEDIUM")
+    btn:SetFrameLevel(8)
+    btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+    -- Icon texture (the actual addon icon)
+    local icon = btn:CreateTexture(nil, "BACKGROUND")
+    icon:SetWidth(21)
+    icon:SetHeight(21)
+    icon:SetPoint("CENTER", btn, "CENTER", 0, 1)
     icon:SetTexture("Interface\\Icons\\Spell_Frost_Stun")
 
+    -- Circular border overlay
     local border = btn:CreateTexture(nil, "OVERLAY")
-    border:SetWidth(54)
-    border:SetHeight(54)
-    border:SetPoint("CENTER")
+    border:SetWidth(53)
+    border:SetHeight(53)
+    border:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
 
-    local bg = btn:CreateTexture(nil, "BACKGROUND")
-    bg:SetWidth(24)
-    bg:SetHeight(24)
-    bg:SetPoint("CENTER")
-    bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+    -- Position the button on the minimap edge at the given angle
+    local function UpdatePosition()
+        local angle = math.rad(minimapAngle)
+        local x = math.cos(angle) * 80
+        local y = math.sin(angle) * 80
+        btn:ClearAllPoints()
+        btn:SetPoint("CENTER", Minimap, "CENTER", x, y)
+    end
 
-    local isDragging = false
+    UpdatePosition()
+
     btn:RegisterForDrag("LeftButton")
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
     btn:SetScript("OnDragStart", function()
-        isDragging = true
-        btn:StartMoving()
+        btn:SetScript("OnUpdate", function()
+            local mx, my = Minimap:GetCenter()
+            local cx, cy = GetCursorPosition()
+            local scale = Minimap:GetEffectiveScale()
+            cx, cy = cx / scale, cy / scale
+            minimapAngle = math.deg(math.atan2(cy - my, cx - mx))
+            UpdatePosition()
+        end)
     end)
 
     btn:SetScript("OnDragStop", function()
-        isDragging = false
-        btn:StopMovingOrSizing()
+        btn:SetScript("OnUpdate", nil)
+        InstanceTrackerDB.minimapAngle = minimapAngle
     end)
 
     btn:SetScript("OnClick", function(self, button)
-        if button == "LeftButton" then
+        if button == "LeftButton" and IsControlKeyDown() then
+            -- Ctrl+Click = Reset instances
+            ResetInstances()
+            DEFAULT_CHAT_FRAME:AddMessage(
+                ColorText("[InstanceTracker] ", 0.4, 0.8, 1)
+                .. "Instances reset."
+            )
+        elseif button == "LeftButton" then
             SlashCmdList["INSTANCETRACKER"]("")
         elseif button == "RightButton" then
             SlashCmdList["INSTANCETRACKER"]("status")
@@ -903,7 +924,9 @@ local function CreateMinimapButton()
         GameTooltip:AddDoubleLine("Remaining:", remaining, 1, 1, 1, 0.4, 1, 0.4)
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("|cff888888Left-click: Toggle window|r")
+        GameTooltip:AddLine("|cff888888Ctrl-click: Reset instances|r")
         GameTooltip:AddLine("|cff888888Right-click: Status in chat|r")
+        GameTooltip:AddLine("|cff888888Drag: Move around minimap|r")
         GameTooltip:Show()
     end)
 
