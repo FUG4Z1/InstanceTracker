@@ -44,7 +44,7 @@ When you receive the *"You have entered too many instances recently"* system mes
 
 ## Installation
 
-1. Download or clone this repository
+1. Check Releases: https://github.com/FUG4Z1/InstanceTracker/releases
 2. Copy the `InstanceTracker` folder into your addons directory:
 
 ```
