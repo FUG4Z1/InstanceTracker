@@ -4,4 +4,4 @@
 ## Author: Fugazi
 ## Version: 1.7.0
 ## SavedVariables: InstanceTrackerDB
-InstanceTracker.lua
+FugaziInstanceTracker.lua
