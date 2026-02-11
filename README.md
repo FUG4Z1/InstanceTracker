@@ -14,6 +14,14 @@ A clean, reliable instance and gold farming tracker for World of Warcraft 3.3.5a
 
 Whether you're pushing the 5-per-hour dungeon limit or farming gold in the open world, this addon gives you clear hourly cap tracking, saved lockouts, automatic run history, and a powerful manual Gold-Per-Hour tracker that works anywhere.
 
+
+
+
+<img width="980" height="1300" alt="FUGAZI" src="https://github.com/user-attachments/assets/847af39f-0aa2-47c1-8e34-e2989af253cb" />
+
+
+
+
 ## What It Does
 
 ### 1. Hourly Instance Cap Tracking
