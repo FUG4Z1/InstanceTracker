@@ -2156,23 +2156,19 @@ RefreshGPHUI = function()
 
     if not gphSession then
         gphFrame.statusText:SetText("|cff888888No active session. Click Start to begin.|r")
-        content:SetHeight(1)
         gphFrame.updateToggle()
-        return
+    else
+        gphFrame.updateToggle()
+        local dur = now - gphSession.startTime
+        local liveGold = GetMoney() - gphSession.startGold
+        if liveGold < 0 then liveGold = 0 end
+        local gph = dur > 0 and (liveGold / (dur / 3600)) or 0
+        gphFrame.statusText:SetText(
+            "|cffdaa520Timer:|r |cffffffff" .. FormatTimeMedium(dur) .. "|r"
+            .. "   |cffdaa520Gold:|r " .. FormatGold(liveGold)
+            .. "   |cffdaa520GPH:|r " .. FormatGold(math.floor(gph))
+        )
     end
-
-    gphFrame.updateToggle()
-
-    local dur = now - gphSession.startTime
-    local liveGold = GetMoney() - gphSession.startGold
-    if liveGold < 0 then liveGold = 0 end
-    local gph = dur > 0 and (liveGold / (dur / 3600)) or 0
-
-    gphFrame.statusText:SetText(
-        "|cffdaa520Timer:|r |cffffffff" .. FormatTimeMedium(dur) .. "|r"
-        .. "   |cffdaa520Gold:|r " .. FormatGold(liveGold)
-        .. "   |cffdaa520GPH:|r " .. FormatGold(math.floor(gph))
-    )
 
     local yOff = 0
 
