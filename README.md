@@ -72,6 +72,9 @@ The addon records entries on zone change into instanced content. Re-entering the
 
 ## FAQ
 
+**Q: How do I install or update the addon?
+A: Grab the latest version from Releases (right sidebar → latest release → zip file). Extract the FugaziInstanceTracker folder straight into your World of Warcraft/Interface/AddOns/ directory. Restart WoW and you're good.
+
 **Q: It counted an entry when I just zoned out and back in — why?**  
 A: Re-entering the same instance after more than ~60 seconds counts as new. Use the **[x]** button next to recent entries to remove mistakes.
 
