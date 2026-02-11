@@ -2,7 +2,7 @@
 
 A lightweight addon for **World of Warcraft 3.3.5a** (Wrath of the Lich King) that tracks your instance lockouts and the **5-per-hour instance cap**.
 
-![Version](https://img.shields.io/badge/version-1.7.0-blue)
+![Version](https://img.shields.io/badge/version-1.7.1-blue)
 ![Interface](https://img.shields.io/badge/interface-3.3.5a-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
