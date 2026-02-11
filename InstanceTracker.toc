@@ -1,7 +1,7 @@
 ## Interface: 30300
-## Title: Instance Tracker
-## Notes: Tracks instance lockouts and the 5-per-hour limit for WoW 3.3.5a.
+## Title: Fugazi Instance Tracker
+## Notes: Tracks instance lockouts and the 5-per-hour limit, keeps a Ledger and more...
 ## Author: Fugazi
-## Version: 1.6.0
+## Version: 1.7.0
 ## SavedVariables: InstanceTrackerDB
 InstanceTracker.lua
