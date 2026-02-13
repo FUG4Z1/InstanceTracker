@@ -17,6 +17,9 @@ A clean, reliable instance and gold farming tracker for **World of Warcraft 3.3.
 # 1. FULL LOOT MANAGER!!! - Gold-Per-Hour (GPH) Manual Tracker
 Start and stop GPH sessions anywhere. Tracks gold and every item picked up. The GPH window is also a **full loot manager**: sort, filter, protect, delete, and auto-vendor without leaving the flow.
 
+![filter](https://github.com/user-attachments/assets/7d1102cf-d851-4429-a3f0-faffd57e93cd)
+
+
 ## 2. Hourly Instance Cap Tracking
 - Tracks how many instances you've entered in the current **rolling hour** (the classic 5-per-hour soft cap).
 - Shows remaining runs and countdown until your next slot is available.
