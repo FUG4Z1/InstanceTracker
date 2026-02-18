@@ -1,0 +1,9 @@
+## Interface: 30300
+## Title: |cff3ad1c8__FugaziInstanceTracker|r
+## Notes: Instance tracker (runs, ledger, items) using the existing FugaziInstanceTracker core.
+## Author: Fugazi
+## Version: 1.7.4
+## SavedVariables: InstanceTrackerDB
+
+__FugaziInstanceTracker.lua
+

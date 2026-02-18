@@ -1,0 +1,11 @@
+## Interface: 30300
+## Title: |cff3ad1c8__FugaziBAGS|r
+## Notes: Bags and bank (GPH-style). B opens inventory. Escape to close. ElvUI reskin.
+## Author: Fugazi
+## Version: 1.7.4
+## SavedVariables: TestDB, FugaziBAGSDB
+## Default: FugaziBAGSDB (TestDB kept for one-time migration from old installs)
+## Load order: by folder name (__ loads late). To load after ElvUI add: ## Dependencies: ElvUI
+FugaziBAGS_VAR.lua
+skins.lua
+FugaziBAGS.lua
