@@ -333,14 +333,18 @@ local function CreateInstanceTrackerOptionsPanel()
             if info then
                 info.text = opt.text
                 info.value = opt.value
-                info.checked = ((_G.FugaziBAGSDB and _G.FugaziBAGSDB.fitSkin) or "original") == opt.value
+                info.checked = ((_G.InstanceTrackerDB and _G.InstanceTrackerDB.fitSkin) or (_G.FugaziBAGSDB and _G.FugaziBAGSDB.fitSkin) or "original") == opt.value
                 info.func = function()
+                    local val = opt.value
                     local SV = _G.FugaziBAGSDB
-                    if SV then SV.fitSkin = opt.value end
-                    if UIDropDownMenu_SetSelectedValue then UIDropDownMenu_SetSelectedValue(dropdown, opt.value) end
+                    if SV then SV.fitSkin = val end
+                    if _G.InstanceTrackerDB then _G.InstanceTrackerDB.fitSkin = val end
+                    if UIDropDownMenu_SetSelectedValue then UIDropDownMenu_SetSelectedValue(dropdown, val) end
                     if UIDropDownMenu_SetText then UIDropDownMenu_SetText(dropdown, opt.text) end
-                    if _G.InstanceTrackerFrame and _G.InstanceTrackerFrame.ApplySkin then _G.InstanceTrackerFrame:ApplySkin() end
-                    if _G.InstanceTrackerStatsFrame and _G.InstanceTrackerStatsFrame.ApplySkin then _G.InstanceTrackerStatsFrame:ApplySkin() end
+                    -- Use FIT's apply function so Instance Tracker windows actually change (same as /fit skin).
+                    if _G.ApplyFITSkinToAllFrames then
+                        _G.ApplyFITSkinToAllFrames(val)
+                    end
                 end
                 UIDropDownMenu_AddButton(info, level or 1)
             end
@@ -350,9 +354,7 @@ local function CreateInstanceTrackerOptionsPanel()
     if UIDropDownMenu_Initialize then UIDropDownMenu_Initialize(dropdown, FitSkinMenu_Initialize) end
 
     panel.refresh = function()
-        local SV = _G.FugaziBAGSDB
-        if not SV then return end
-        local val = SV.fitSkin or "original"
+        local val = (_G.InstanceTrackerDB and _G.InstanceTrackerDB.fitSkin) or (_G.FugaziBAGSDB and _G.FugaziBAGSDB.fitSkin) or "original"
         if val ~= "original" and val ~= "elvui" and val ~= "elvui_real" and val ~= "pimp_purple" then
             val = "original"
         end
@@ -5873,21 +5875,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
     elseif event == "MERCHANT_SHOW" or event == "GOSSIP_SHOW" or event == "QUEST_GREETING" or event == "MAIL_SHOW" then
         gphNpcDialogTime = GetTime()
-        -- At any vendor/NPC/mailbox: hide default bags and show GPH so only FugaziBAGS is visible
+        -- Only hide default bags here; do NOT auto-show GPH (inventory opens only via B key or when banker opens bank).
         do
             local defer = CreateFrame("Frame")
             defer:SetScript("OnUpdate", function(self)
                 self:SetScript("OnUpdate", nil)
                 if Addon.HideBlizzardBags then Addon.HideBlizzardBags() end
-                local inv = gphFrame or _G.TestGPHFrame
-                if not inv and CreateGPHFrame then inv = CreateGPHFrame() end
-                if inv and not inv:IsShown() then
-                    if _G.TestGPHFrame then gphFrame = _G.TestGPHFrame end
-                    if not gphFrame then gphFrame = inv end
-                    inv:Show()
-                    if Addon.SaveFrameLayout then Addon.SaveFrameLayout(inv, "gphShown", "gphPoint") end
-                    if RefreshGPHUI then RefreshGPHUI() end
-                end
             end)
         end
         if event == "MERCHANT_SHOW" then

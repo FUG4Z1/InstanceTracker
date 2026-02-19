@@ -71,8 +71,10 @@ local FIT_SKIN = {
 }
 
 local function ResolveFitSkinName()
-    local SV = _G.FugaziBAGSDB
-    local val = SV and SV.fitSkin or "original"
+    -- Prefer FIT addon's saved setting so the FIT options panel works when this frame was created by BAGS.
+    local val = (_G.InstanceTrackerDB and _G.InstanceTrackerDB.fitSkin)
+        or (_G.FugaziBAGSDB and _G.FugaziBAGSDB.fitSkin)
+        or "original"
     if val == "elvui_real" then return "elvui_real" end
     if val == "elvui" then return "elvui" end
     if val == "pimp_purple" then return "pimp_purple" end
@@ -102,14 +104,14 @@ local function ApplyInstanceTrackerFrameSkin(f)
         if f._pimpSuedeTex then f._pimpSuedeTex:Hide() end
     end
 
-    local titleBar = f.titleBar
-    if titleBar then
+    -- Support both BAGS (titleBar/fitTitle) and IT (itTitleBar/itTitleText) frame refs
+    local titleBar = f.titleBar or f.itTitleBar
+    if titleBar and s.titleBackdrop then
         titleBar:SetBackdrop(s.titleBackdrop)
-        titleBar:SetBackdropColor(unpack(s.titleBg))
+        if s.titleBg then titleBar:SetBackdropColor(unpack(s.titleBg)) end
     end
-    if f.fitTitle and s.titleTextColor then
-        f.fitTitle:SetTextColor(unpack(s.titleTextColor))
-    end
+    local titleText = f.fitTitle or f.itTitleText
+    if titleText and s.titleTextColor then titleText:SetTextColor(unpack(s.titleTextColor)) end
 
     local btnColor = s.btnNormal
     local setBtn = function(btn) if btn and btn.bg and btnColor then btn.bg:SetTexture(unpack(btnColor)) end end
@@ -118,8 +120,10 @@ local function ApplyInstanceTrackerFrameSkin(f)
     setBtn(f.resetBtn)
     setBtn(f.gphBtn)
 
-    if s.sepColor and f.sep then f.sep:SetTexture(unpack(s.sepColor)) end
-    if s.statusTextColor and f.hourlyText then f.hourlyText:SetTextColor(unpack(s.statusTextColor)) end
+    local sep = f.sep or f.itSep
+    if s.sepColor and sep then sep:SetTexture(unpack(s.sepColor)) end
+    local hourlyText = f.hourlyText or f.itHourlyText
+    if s.statusTextColor and hourlyText then hourlyText:SetTextColor(unpack(s.statusTextColor)) end
 end
 
 local function ApplyInstanceTrackerStatsFrameSkin(f)
@@ -144,14 +148,13 @@ local function ApplyInstanceTrackerStatsFrameSkin(f)
         if f._pimpSuedeTex then f._pimpSuedeTex:Hide() end
     end
 
-    local titleBar = f.titleBar
-    if titleBar then
+    local titleBar = f.titleBar or f.itTitleBar
+    if titleBar and s.titleBackdrop then
         titleBar:SetBackdrop(s.titleBackdrop)
-        titleBar:SetBackdropColor(unpack(s.titleBg))
+        if s.titleBg then titleBar:SetBackdropColor(unpack(s.titleBg)) end
     end
-    if f.fitTitle and s.titleTextColor then
-        f.fitTitle:SetTextColor(unpack(s.titleTextColor))
-    end
+    local titleText = f.fitTitle or f.itTitleText
+    if titleText and s.titleTextColor then titleText:SetTextColor(unpack(s.titleTextColor)) end
 
     local btnColor = s.btnNormal
     local setBtn = function(btn) if btn and btn.bg and btnColor then btn.bg:SetTexture(unpack(btnColor)) end end

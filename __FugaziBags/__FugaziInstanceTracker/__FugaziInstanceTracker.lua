@@ -1,14 +1,5 @@
 -- __FugaziInstanceTracker
--- Lightweight shim that ensures the original FugaziInstanceTracker addon is loaded.
--- This lets you have a separate "__FugaziInstanceTracker" folder/addon entry without
--- duplicating or changing the working core logic.
-
-local coreName = "FugaziInstanceTracker"
-
--- Try to load the core addon if it is not already loaded.
-if not IsAddOnLoaded(coreName) and LoadAddOn then
-    pcall(LoadAddOn, coreName)
-end
+-- Instance tracker (lockouts, ledger, skins). Single addon; no separate "core" required.
 
 ----------------------------------------------------------------------
 -- Fugazi Instance Tracker — by Fugazi
@@ -102,7 +93,9 @@ local IT_SKIN = {
 
 local function ApplyInstanceTrackerSkin(f)
     if not f then return end
-    -- Use our own saved skin so we work with or without __FugaziBAGS.
+
+    -- Always use FIT's own skin table (IT_SKIN) so skins work even when BAGS is disabled.
+    -- The dropdown writes InstanceTrackerDB.fitSkin, and this function reads it directly.
     local val = InstanceTrackerDB.fitSkin or "original"
     if val ~= "original" and val ~= "elvui" and val ~= "elvui_real" and val ~= "pimp_purple" then
         val = "original"
@@ -136,25 +129,28 @@ local function ApplyInstanceTrackerSkin(f)
         if f._pimpSuedeTex then f._pimpSuedeTex:Hide() end
     end
 
-    local titleBar = f.itTitleBar
+    -- Support both IT (itTitleBar) and BAGS (titleBar) frame refs
+    local titleBar = f.itTitleBar or f.titleBar
     if titleBar and s.titleBackdrop then
         titleBar:SetBackdrop(s.titleBackdrop)
-        if s.titleBg then
-            titleBar:SetBackdropColor(unpack(s.titleBg))
-        end
+        if s.titleBg then titleBar:SetBackdropColor(unpack(s.titleBg)) end
     end
+    local titleText = f.itTitleText or f.fitTitle
+    if titleText and s.titleTextColor then titleText:SetTextColor(unpack(s.titleTextColor)) end
 
-    if f.itTitleText and s.titleTextColor then
-        f.itTitleText:SetTextColor(unpack(s.titleTextColor))
-    end
+    local hourlyText = f.itHourlyText or f.hourlyText
+    if hourlyText and s.hourlyTextColor then hourlyText:SetTextColor(unpack(s.hourlyTextColor)) end
 
-    if f.itHourlyText and s.hourlyTextColor then
-        f.itHourlyText:SetTextColor(unpack(s.hourlyTextColor))
-    end
+    local sep = f.itSep or f.sep
+    if sep and s.sepColor then sep:SetTexture(unpack(s.sepColor)) end
 
-    if f.itSep and s.sepColor then
-        f.itSep:SetTexture(unpack(s.sepColor))
-    end
+    -- Title bar buttons (main frame)
+    local btnColor = s.btnNormal
+    local setBtn = function(btn) if btn and btn.bg and btnColor then btn.bg:SetTexture(unpack(btnColor)) end end
+    setBtn(f.collapseBtn)
+    setBtn(f.statsBtn)
+    setBtn(f.resetBtn)
+    setBtn(f.gphBtn)
 end
 
 InstanceTrackerDB = InstanceTrackerDB or {}
@@ -5916,6 +5912,8 @@ SlashCmdList["INSTANCETRACKER"] = function(msg)
         AddonPrint("  |cffaaddff/fit gph|r or |cffaaddff/fit inv|r or |cffaaddff/gph|r  Toggle Gold Per Hour window")
         AddonPrint("  (Bind your bag key to |cffffcc00/fit gph|r or |cffffcc00/gph|r when Inv is on)")
         AddonPrint("  |cffaaddff/fit vp|r  Show that autosell/summon are in __FugaziBAGS")
+        AddonPrint("  |cffaaddff/fit skin <name>|r  Set skin: original, elvui, elvui_real, pimp_purple")
+        AddonPrint("  |cffaaddff/fit options|r  Open skin popup (same as right-click minimap)")
         return
     end
 
@@ -5926,6 +5924,34 @@ SlashCmdList["INSTANCETRACKER"] = function(msg)
             ColorText("[Fugazi Instance Tracker] ", 0.4, 0.8, 1)
             .. "Chat output " .. (InstanceTrackerDB.fitMute and "|cffff4444muted|r." or "|cff44ff44unmuted|r.")
         )
+        return
+    end
+
+    if cmd == "skin" then
+        local rest = (msg:match("^skin%s+(.+)$") or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        local val = (rest == "" or rest == "original") and "original"
+            or (rest == "elvui" or rest == "ebonhold") and "elvui"
+            or (rest == "elvui_real" or rest == "elvui real") and "elvui_real"
+            or (rest == "pimp_purple" or rest == "pimp" or rest == "purple") and "pimp_purple"
+            or nil
+        if not val then
+            print("|cff00aaff[FIT]|r Usage: /fit skin original|elvui|elvui_real|pimp_purple")
+            return
+        end
+        if _G.ApplyFITSkinToAllFrames then
+            _G.ApplyFITSkinToAllFrames(val)
+        else
+            print("|cff00aaff[FIT]|r Skin apply not ready; try again or /reload.")
+        end
+        return
+    end
+
+    if cmd == "options" or cmd == "opts" or cmd == "skins" then
+        if _G.ShowFITSkinPopup then
+            _G.ShowFITSkinPopup()
+        else
+            print("|cff00aaff[FIT]|r Not ready. Right-click minimap icon or /reload.")
+        end
         return
     end
 
@@ -5995,75 +6021,173 @@ end
 
 ----------------------------------------------------------------------
 -- Escape menu: Instance Tracker options (skin for lockouts/ledger)
+-- Use buttons instead of dropdown so skin apply always fires on click.
 ----------------------------------------------------------------------
+local function ApplyFITSkinToAllFrames(skinValue)
+    InstanceTrackerDB.fitSkin = skinValue
+    if _G.FugaziBAGSDB then
+        _G.FugaziBAGSDB.fitSkin = skinValue
+    end
+    -- Always use IT's ApplyInstanceTrackerSkin (reads InstanceTrackerDB.fitSkin) so one code path.
+    local n = 0
+    if _G.InstanceTrackerFrame then
+        ApplyInstanceTrackerSkin(_G.InstanceTrackerFrame)
+        n = n + 1
+    end
+    if _G.InstanceTrackerStatsFrame then
+        ApplyInstanceTrackerSkin(_G.InstanceTrackerStatsFrame)
+        n = n + 1
+    end
+    if _G.InstanceTrackerItemDetailFrame then
+        ApplyInstanceTrackerSkin(_G.InstanceTrackerItemDetailFrame)
+        n = n + 1
+    end
+    if n == 0 then
+        print("|cff00aaff[FIT]|r Skin set to \"" .. tostring(skinValue) .. "\". Open the Instance Tracker window (/fit) to see it.")
+    else
+        print("|cff00aaff[FIT]|r Skin set to \"" .. tostring(skinValue) .. "\" and applied to " .. n .. " window(s).")
+    end
+end
+_G.ApplyFITSkinToAllFrames = ApplyFITSkinToAllFrames
+
+----------------------------------------------------------------------
+-- Standalone skin popup (right-click minimap). Avoids broken Escape menu.
+----------------------------------------------------------------------
+local fitSkinPopup
+local function CreateFITSkinPopup()
+    if fitSkinPopup then return fitSkinPopup end
+    local f = CreateFrame("Frame", "FITSkinPopup", UIParent)
+    f:SetWidth(220)
+    f:SetHeight(180)
+    f:SetPoint("CENTER", 0, 0)
+    f:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 32, edgeSize = 24,
+        insets = { left = 11, right = 12, top = 12, bottom = 11 },
+    })
+    f:SetBackdropColor(0, 0, 0, 0.9)
+    f:SetFrameStrata("DIALOG")
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function() f:StartMoving() end)
+    f:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOP", f, "TOP", 0, -14)
+    title:SetText("FIT Skins")
+
+    local skinList = {
+        { value = "original",    text = "Original" },
+        { value = "elvui",       text = "Elvui (Ebonhold)" },
+        { value = "elvui_real",  text = "ElvUI" },
+        { value = "pimp_purple", text = "Pimp Purple" },
+    }
+    local prev
+    for _, opt in ipairs(skinList) do
+        local btn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        btn:SetText(opt.text)
+        btn:SetHeight(22)
+        btn:SetWidth(180)
+        btn:SetPoint("TOP", prev or title, prev and "BOTTOM" or "BOTTOM", 0, prev and -4 or -12)
+        prev = btn
+        local val = opt.value
+        btn:SetScript("OnClick", function()
+            if _G.ApplyFITSkinToAllFrames then
+                _G.ApplyFITSkinToAllFrames(val)
+            end
+            f:Hide()
+        end)
+    end
+
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", f, "TOPRIGHT", 4, 4)
+    close:SetScript("OnClick", function() f:Hide() end)
+
+    f:Hide()
+    fitSkinPopup = f
+    return f
+end
+
+local function ShowFITSkinPopup()
+    CreateFITSkinPopup():Show()
+end
+_G.ShowFITSkinPopup = ShowFITSkinPopup
+
 local function CreateInstanceTrackerOptionsPanel()
     if _G.FugaziInstanceTrackerOptionsPanel then return end
-    local panel = CreateFrame("Frame", "FugaziInstanceTrackerOptionsPanel", UIParent)
-    panel.name = "_Fugazi Instance Tracker"
+    -- Parent to InterfaceOptionsFrame so panel lives inside options UI and buttons receive clicks (WotLK).
+    local parent = _G.InterfaceOptionsFrame and _G.InterfaceOptionsFrame or UIParent
+    local panel = CreateFrame("Frame", "FugaziInstanceTrackerOptionsPanel", parent)
+    -- Name must be unique so we're not confused with core addon's panel. Right-click minimap opens this.
+    panel.name = "Fugazi IT Skins"
     panel.okay = function() end
     panel.cancel = function() end
     panel.default = function() end
     panel.refresh = function() end
+    -- Give panel a size so scroll frame in Interface Options shows our content (WotLK).
+    panel:SetWidth(400)
+    panel:SetHeight(280)
 
     local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -16)
-    title:SetText("_Fugazi Instance Tracker")
+    title:SetText("Fugazi Instance Tracker – Skins")
 
     local sub = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -12)
-    sub:SetText("Skin for lockouts and ledger windows:")
+    sub:SetText("Skin for lockouts and ledger windows (click to apply):")
 
-    local dropdown = CreateFrame("Frame", "FugaziInstanceTrackerOptionsSkinDropdown", panel, "UIDropDownMenuTemplate")
-    dropdown:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", 0, -8)
-    dropdown:SetScale(1)
-    if UIDropDownMenu_SetWidth then UIDropDownMenu_SetWidth(dropdown, 180) end
-
-    local function FitSkinMenu_Initialize(_, level)
-        local list = {
-            { value = "original",    text = "Original" },
-            { value = "elvui",       text = "Elvui (Ebonhold)" },
-            { value = "elvui_real",  text = "ElvUI" },
-            { value = "pimp_purple", text = "Pimp Purple" },
-        }
-        for _, opt in ipairs(list) do
-            local info = UIDropDownMenu_CreateInfo and UIDropDownMenu_CreateInfo()
-            if info then
-                info.text = opt.text
-                info.value = opt.value
-                info.checked = (InstanceTrackerDB.fitSkin or "original") == opt.value
-                info.func = function()
-                    InstanceTrackerDB.fitSkin = opt.value
-                    if UIDropDownMenu_SetSelectedValue then UIDropDownMenu_SetSelectedValue(dropdown, opt.value) end
-                    if UIDropDownMenu_SetText then UIDropDownMenu_SetText(dropdown, opt.text) end
-                    if _G.InstanceTrackerFrame and _G.InstanceTrackerFrame.ApplySkin then
-                        _G.InstanceTrackerFrame:ApplySkin()
-                    end
-                end
-                UIDropDownMenu_AddButton(info, level or 1)
-            end
+    local skinList = {
+        { value = "original",    text = "Original" },
+        { value = "elvui",       text = "Elvui (Ebonhold)" },
+        { value = "elvui_real",  text = "ElvUI" },
+        { value = "pimp_purple", text = "Pimp Purple" },
+    }
+    local prevBtn
+    for i, opt in ipairs(skinList) do
+        local btn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+        btn:SetText(opt.text)
+        btn:SetHeight(24)
+        btn:SetWidth(200)
+        if prevBtn then
+            btn:SetPoint("TOPLEFT", prevBtn, "BOTTOMLEFT", 0, -6)
+        else
+            btn:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", 0, -14)
         end
+        prevBtn = btn
+        local val = opt.value
+        btn:SetScript("OnClick", function()
+            if _G.ApplyFITSkinToAllFrames then
+                _G.ApplyFITSkinToAllFrames(val)
+            else
+                print("|cff00aaff[FIT]|r Skin apply not ready. Try /fit skin " .. tostring(val) .. " or /reload.")
+            end
+        end)
     end
 
-    if UIDropDownMenu_Initialize then UIDropDownMenu_Initialize(dropdown, FitSkinMenu_Initialize) end
-
     panel.refresh = function()
-        local val = InstanceTrackerDB.fitSkin or "original"
-        if val ~= "original" and val ~= "elvui" and val ~= "elvui_real" and val ~= "pimp_purple" then
-            val = "original"
-        end
-        local text
-        if val == "elvui" then text = "Elvui (Ebonhold)"
-        elseif val == "elvui_real" then text = "ElvUI"
-        elseif val == "pimp_purple" then text = "Pimp Purple"
-        else text = "Original" end
-        if UIDropDownMenu_SetSelectedValue then UIDropDownMenu_SetSelectedValue(dropdown, val) end
-        if UIDropDownMenu_SetText then UIDropDownMenu_SetText(dropdown, text) end
-        if UIDropDownMenu_Refresh then UIDropDownMenu_Refresh(dropdown, nil, 1) end
+        -- Buttons don't need refresh; skin is applied on click.
     end
 
     if InterfaceOptions_AddCategory then
         InterfaceOptions_AddCategory(panel)
     end
+
+    -- OnShow often doesn't fire when the user clicks our category (Blizzard may not call Show() again).
+    -- So hook the function that runs when a category is selected; when it's ours, open the popup.
+    local origOpenToCategory = _G.InterfaceOptionsFrame_OpenToCategory
+    if type(origOpenToCategory) == "function" then
+        _G.InterfaceOptionsFrame_OpenToCategory = function(panelOrName)
+            origOpenToCategory(panelOrName)
+            local isOurs = (panelOrName == panel) or (type(panelOrName) == "string" and panelOrName == "Fugazi IT Skins")
+            if isOurs and _G.ShowFITSkinPopup then
+                _G.ShowFITSkinPopup()
+            end
+        end
+    end
+
+    print("|cff00aaff[FIT]|r Skins: Escape > Interface Options > |cffffcc00Fugazi IT Skins|r, or /fit options, or /fit skin <name>.")
 end
 
 ----------------------------------------------------------------------
@@ -6112,11 +6236,7 @@ local function CreateMinimapButton()
         elseif button == "LeftButton" then
             SlashCmdList["INSTANCETRACKER"]("")
         elseif button == "RightButton" then
-            -- Open our own options panel (skin for lockouts/ledger).
-            if InterfaceOptionsFrame_OpenToCategory and _G.FugaziInstanceTrackerOptionsPanel then
-                InterfaceOptionsFrame_OpenToCategory(_G.FugaziInstanceTrackerOptionsPanel)
-                InterfaceOptionsFrame_OpenToCategory(_G.FugaziInstanceTrackerOptionsPanel)
-            end
+            ShowFITSkinPopup()
         end
     end)
     btn:SetScript("OnEnter", function(self)
@@ -6131,7 +6251,7 @@ local function CreateMinimapButton()
         GameTooltip:AddLine(" ")
         GameTooltip:AddLine("|cff888888Left-click: Toggle window|r")
         GameTooltip:AddLine("|cff888888Ctrl-click: Reset instances|r")
-        GameTooltip:AddLine("|cff888888Right-click: Open Instance Tracker options|r")
+        GameTooltip:AddLine("|cff888888Right-click: Skin options popup|r")
         GameTooltip:AddLine("|cff888888/fit help for commands|r")
         GameTooltip:AddLine("|cff888888Drag: Move around minimap|r")
         GameTooltip:Show()
