@@ -17,6 +17,7 @@ DB.gphPreviouslyWornOnlyPerChar = DB.gphPreviouslyWornOnlyPerChar or {}
 DB.gphDestroyListPerChar = DB.gphDestroyListPerChar or {}
 DB.gphItemTypeCache = DB.gphItemTypeCache or {}
 DB.gphSkin = DB.gphSkin or "original"
+DB.fitSkin = DB.fitSkin or "original"
 
 -- Viewport width for scroll content (must match main file; used by GetGPHRow/GetGPHItemBtn etc.)
 local SCROLL_CONTENT_WIDTH = 296
@@ -104,6 +105,7 @@ local gphVendorRunning = false
 local gphVendorWorker = CreateFrame("Frame")
 gphVendorWorker:Hide()
 
+-- Never sells (*) protected items, epics (4), legendaries (5), or artifacts (6). Queue build and worker both enforce this.
 local function BuildGphVendorQueue()
     wipe(gphVendorQueue)
     gphVendorQueueIndex = 1
@@ -120,7 +122,8 @@ local function BuildGphVendorQueue()
                     local texture, itemCount, locked = GetContainerItemInfo(bag, slot)
                     if itemCount and itemCount > 0 and not locked then
                         local sellPrice = GetItemInfo and select(11, GetItemInfo(link or itemID))
-                        if sellPrice and sellPrice > 0 and not (quality == 4) then
+                        -- quality 4=epic, 5=legendary, 6=artifact: never auto-sell
+                        if sellPrice and sellPrice > 0 and quality ~= 4 and quality ~= 5 and quality ~= 6 then
                             gphVendorQueue[#gphVendorQueue + 1] = { type = "sell", bag = bag, slot = slot, itemID = itemID }
                         end
                     end
@@ -265,7 +268,8 @@ gphVendorWorker:SetScript("OnUpdate", function(self, elapsed)
         local _, _, quality
         if link and GetItemInfo then _, _, quality = GetItemInfo(link) end
         if quality == nil and GetItemInfo then _, _, quality = GetItemInfo(action.itemID) end
-        if not IsItemProtectedAPI(action.itemID, quality) then
+        local neverSell = (quality == 4 or quality == 5 or quality == 6)  -- epic, legendary, artifact
+        if not neverSell and not IsItemProtectedAPI(action.itemID, quality) then
             UseContainerItem(action.bag, action.slot)
         end
     end
@@ -2246,12 +2250,17 @@ StaticPopupDialogs["GPH_AUTOSELL_CONFIRM"] = {
     button1 = "Yes, enable",
     button2 = "Cancel",
     OnAccept = function()
-        DB.gphAutoVendor = true
-        local f = _G.TestGPHFrame or gphFrame
-        if f and f.gphInvBtn then
-            local inv = f.gphInvBtn
-            if inv.icon then inv.icon:SetTexture("Interface\\Icons\\INV_Misc_Coin_01") end
-            if inv.bg then inv.bg:SetTexture(0.2, 0.5, 0.2, 0.8) end
+        -- Only place that may turn autosell ON; B key never touches this.
+        local SV = _G.FugaziBAGSDB
+        if SV then SV.gphAutoVendor = true end
+        -- Use BAGS's frame so InstanceTracker can't point TestGPHFrame at a frame without UpdateInvBtn.
+        local f = _G.FugaziBAGS_GPHFrame or _G.TestGPHFrame
+        if f and f.UpdateInvBtn then
+            local defer = CreateFrame("Frame")
+            defer:SetScript("OnUpdate", function(self)
+                self:SetScript("OnUpdate", nil)
+                if f and f.UpdateInvBtn then f.UpdateInvBtn() end
+            end)
         end
     end,
     timeout = 0,
@@ -2430,6 +2439,8 @@ local function CreateStatsFrame()
     title:SetPoint("LEFT", titleBar, "LEFT", 8, 0)
     title:SetText("Ledger")
     title:SetTextColor(1, 0.85, 0.4, 1)
+    f.titleBar = titleBar
+    f.fitTitle = title
 
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
@@ -2461,6 +2472,7 @@ local function CreateStatsFrame()
     collapseIcon:SetHeight(12)
     collapseIcon:SetPoint("CENTER")
     collapseBtn.icon = collapseIcon
+    f.collapseBtn = collapseBtn
     if DB.statsCollapsed == nil then DB.statsCollapsed = false end
     local function UpdateStatsCollapse()
         if not f.scrollFrame then return end
@@ -2524,6 +2536,14 @@ local function CreateStatsFrame()
         self.label:SetText("|cffff8844Clear|r")
         GameTooltip:Hide()
     end)
+    f.clearBtn = clearBtn
+
+    f.ApplySkin = function()
+        if _G.__FugaziInstanceTracker_Skins and _G.__FugaziInstanceTracker_Skins.ApplyStats then
+            _G.__FugaziInstanceTracker_Skins.ApplyStats(f)
+        end
+    end
+    f:ApplySkin()
 
     local stats_elapsed = 0
     f:SetScript("OnUpdate", function(self, elapsed)

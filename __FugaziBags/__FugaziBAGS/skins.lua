@@ -224,7 +224,7 @@ local function ApplyGPHFrameSkin(f)
         if coll then f.gphCollapseBtn.bg:SetTexture(unpack(coll)) end
     end
     if f.gphScaleBtn and f.gphScaleBtn.bg then
-        local scale = (DB and DB.gphScale15 and f.gphScaleBtnBright) or f.gphScaleBtnDim
+        local scale = (DB and DB.gphScale15) and f.gphScaleBtnDim or f.gphScaleBtnBright
         if scale then f.gphScaleBtn.bg:SetTexture(unpack(scale)) end
     end
     if s.searchBtnBg and f.gphSearchBtn and f.gphSearchBtn.bg then

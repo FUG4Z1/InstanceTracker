@@ -30,8 +30,12 @@ DB.gphPreviouslyWornOnlyPerChar = DB.gphPreviouslyWornOnlyPerChar or {}
 DB.gphDestroyListPerChar = DB.gphDestroyListPerChar or {}
 DB.gphItemTypeCache = DB.gphItemTypeCache or {}
 DB.gphSkin = DB.gphSkin or "original"
+DB.fitSkin = DB.fitSkin or "original"
 
-if not _G._FugaziBAGS_LoadLogged then _G._FugaziBAGS_LoadLogged = true; print("|cff00aaff[__FugaziBAGS]|r script loaded.") end
+if not _G._FugaziBAGS_LoadLogged then
+    _G._FugaziBAGS_LoadLogged = true
+    print("|cff00aaff[__FugaziBAGS]|r Loaded. Press B to open inventory.")
+end
 
 -- Register for PLAYER_LOGIN immediately so we run even if the rest of the file errors. Init runs when we assign _FugaziBAGS_DoLogin later.
 local eventFrame = CreateFrame("Frame")
@@ -67,7 +71,7 @@ function ApplyTestSkin()
     if _G.TestGPHFrame and _G.TestGPHFrame.ApplySkin then _G.TestGPHFrame.ApplySkin() end
     if _G.TestBankFrame and _G.TestBankFrame.ApplySkin then _G.TestBankFrame.ApplySkin() end
     if _G.TestAddon and _G.TestAddon.ApplyStackSplitSkin then _G.TestAddon.ApplyStackSplitSkin() end
-    if _G.InstanceTrackerFrame and _G.InstanceTrackerFrame.ApplySkin then _G.InstanceTrackerFrame:ApplySkin() end
+    -- Instance Tracker uses its own skin (fitSkin) and Escape menu; not tied to BAGS skin.
 end
 
 ----------------------------------------------------------------------
@@ -131,7 +135,7 @@ local function CreateOptionsPanel()
     title:SetText("_FugaziBAGS")
 
     local sub = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+    sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -12)
     sub:SetText("Skin for inventory and bank windows:")
 
     local dropdown = CreateFrame("Frame", "FugaziBAGSOptionsSkinDropdown", panel, "UIDropDownMenuTemplate")
@@ -295,14 +299,87 @@ local function CreateOptionsPanel()
     end
 end
 
+local function CreateInstanceTrackerOptionsPanel()
+    if _G.FugaziInstanceTrackerOptionsPanel then return end
+    local panel = CreateFrame("Frame", "FugaziInstanceTrackerOptionsPanel", UIParent)
+    panel.name = "_Fugazi Instance Tracker"
+    panel.okay = function() end
+    panel.cancel = function() end
+    panel.default = function() end
+    panel.refresh = function() end
+
+    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -16)
+    title:SetText("_Fugazi Instance Tracker")
+
+    local sub = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -12)
+    sub:SetText("Skin for lockouts and ledger windows:")
+
+    local dropdown = CreateFrame("Frame", "FugaziInstanceTrackerOptionsSkinDropdown", panel, "UIDropDownMenuTemplate")
+    dropdown:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", 0, -8)
+    dropdown:SetScale(1)
+    if UIDropDownMenu_SetWidth then UIDropDownMenu_SetWidth(dropdown, 180) end
+
+    local function FitSkinMenu_Initialize(_, level)
+        local list = {
+            { value = "original",    text = "Original" },
+            { value = "elvui",       text = "Elvui (Ebonhold)" },
+            { value = "elvui_real",  text = "ElvUI" },
+            { value = "pimp_purple", text = "Pimp Purple" },
+        }
+        for _, opt in ipairs(list) do
+            local info = UIDropDownMenu_CreateInfo and UIDropDownMenu_CreateInfo()
+            if info then
+                info.text = opt.text
+                info.value = opt.value
+                info.checked = ((_G.FugaziBAGSDB and _G.FugaziBAGSDB.fitSkin) or "original") == opt.value
+                info.func = function()
+                    local SV = _G.FugaziBAGSDB
+                    if SV then SV.fitSkin = opt.value end
+                    if UIDropDownMenu_SetSelectedValue then UIDropDownMenu_SetSelectedValue(dropdown, opt.value) end
+                    if UIDropDownMenu_SetText then UIDropDownMenu_SetText(dropdown, opt.text) end
+                    if _G.InstanceTrackerFrame and _G.InstanceTrackerFrame.ApplySkin then _G.InstanceTrackerFrame:ApplySkin() end
+                    if _G.InstanceTrackerStatsFrame and _G.InstanceTrackerStatsFrame.ApplySkin then _G.InstanceTrackerStatsFrame:ApplySkin() end
+                end
+                UIDropDownMenu_AddButton(info, level or 1)
+            end
+        end
+    end
+
+    if UIDropDownMenu_Initialize then UIDropDownMenu_Initialize(dropdown, FitSkinMenu_Initialize) end
+
+    panel.refresh = function()
+        local SV = _G.FugaziBAGSDB
+        if not SV then return end
+        local val = SV.fitSkin or "original"
+        if val ~= "original" and val ~= "elvui" and val ~= "elvui_real" and val ~= "pimp_purple" then
+            val = "original"
+        end
+        local text
+        if val == "elvui" then text = "Elvui (Ebonhold)"
+        elseif val == "elvui_real" then text = "ElvUI"
+        elseif val == "pimp_purple" then text = "Pimp Purple"
+        else text = "Original" end
+        if UIDropDownMenu_SetSelectedValue then UIDropDownMenu_SetSelectedValue(dropdown, val) end
+        if UIDropDownMenu_SetText then UIDropDownMenu_SetText(dropdown, text) end
+        if UIDropDownMenu_Refresh then UIDropDownMenu_Refresh(dropdown, nil, 1) end
+    end
+
+    if InterfaceOptions_AddCategory then
+        InterfaceOptions_AddCategory(panel)
+    end
+end
+
 local addonLoaderDone = false
 local function RunAddonLoader()
     if addonLoaderDone then return end
     addonLoaderDone = true
+    CreateOptionsPanel()
+    CreateInstanceTrackerOptionsPanel()
     InstallBagHook()
     ApplyBagKeyOverride()
-    CreateOptionsPanel()
-    print("_FugaziBAGS loaded. Bag key (B) opens inventory.")
+    print("|cff00aaff[__FugaziBAGS]|r Loaded. Bag key (B) opens inventory.")
 end
 
 --- GPH bag sort (stack consolidate + reorder). Port of ElvUI bag sort logic; player bags or bank.
@@ -874,9 +951,9 @@ local function CreateGPHFrame()
         tile     = true, tileSize = 32, edgeSize = 24,
         insets   = { left = 2, right = 6, top = 6, bottom = 6 },
     }
-    local f = CreateFrame("Frame", "TestGPHFrame", UIParent)
+    local f = CreateFrame("Frame", "FugaziBAGS_GPHFrame", UIParent)
     if _G.UISpecialFrames then
-        table.insert(_G.UISpecialFrames, "TestGPHFrame")
+        table.insert(_G.UISpecialFrames, "FugaziBAGS_GPHFrame")
     end
     f:SetWidth(340)
     f:SetHeight(400)
@@ -1002,20 +1079,23 @@ local function CreateGPHFrame()
         else
             invBtn.icon:SetTexture("Interface\\Icons\\INV_Misc_Coin_01")
         end
-        if DB.gphAutoVendor then
-            invBtn.bg:SetTexture(0.1, 0.3, 0.15, 0.7)
+        local on = _G.FugaziBAGSDB and _G.FugaziBAGSDB.gphAutoVendor
+        if on then
+            invBtn.bg:SetTexture(0.1, 0.3, 0.15, 0.7)  -- green when ON
         else
-            invBtn.bg:SetTexture(0.1, 0.3, 0.15, 0.7)
+            invBtn.bg:SetTexture(0.45, 0.12, 0.1, 0.7)  -- red when OFF
         end
     end
     local function ShowInvTooltip()
         GameTooltip:SetOwner(invBtn, "ANCHOR_BOTTOM")
         GameTooltip:ClearLines()
-        GameTooltip:AddLine("Autoselling: " .. (DB.gphAutoVendor and "|cff44ff44ON|r" or "|cffff4444OFF|r"), 0.9, 0.8, 0.5)
+        local on = _G.FugaziBAGSDB and _G.FugaziBAGSDB.gphAutoVendor
+        GameTooltip:AddLine("Autoselling: " .. (on and "|cff44ff44ON|r" or "|cffff4444OFF|r"), 0.9, 0.8, 0.5)
         GameTooltip:AddLine("LMB: Toggle autoselling", 0.6, 0.6, 0.5)
         GameTooltip:AddLine("RMB: Summon Goblin Merchant", 0.7, 0.7, 0.7, true)
         GameTooltip:Show()
     end
+    -- Only this button and GPH_AUTOSELL_CONFIRM may change gphAutoVendor. B key only toggles frame.
     invBtn:SetScript("OnMouseUp", function(self, button)
         if button == "RightButton" then
             if Addon.GphIsGoblinMerchantSummoned() then
@@ -1026,8 +1106,10 @@ local function CreateGPHFrame()
             if GameTooltip:GetOwner() == invBtn then ShowInvTooltip() end
             return
         end
-        if DB.gphAutoVendor then
-            DB.gphAutoVendor = false
+        local SV = _G.FugaziBAGSDB
+        if not SV then return end
+        if SV.gphAutoVendor then
+            SV.gphAutoVendor = false
             UpdateInvBtn()
         else
             StaticPopup_Show("GPH_AUTOSELL_CONFIRM")
@@ -1040,6 +1122,7 @@ local function CreateGPHFrame()
     end)
     invBtn:SetScript("OnLeave", function() UpdateInvBtn(); GameTooltip:Hide() end)
     UpdateInvBtn()
+    f.UpdateInvBtn = UpdateInvBtn  -- so GPH_AUTOSELL_CONFIRM popup can refresh the button after turning autosell ON
 
     -- (Bank opens via right-click banker; no title-bar Bank button — user opens bank at NPC, we show our frame on BANKFRAME_OPENED)
 
@@ -1409,11 +1492,11 @@ local function CreateGPHFrame()
     local function UpdateGphSummonBtn()
         local on = DB.gphSummonGreedy ~= false
         if on then
-            sumBg:SetTexture(0.1, 0.3, 0.15, 0.7)
+            sumBg:SetTexture(0.1, 0.3, 0.15, 0.7)  -- green when ON
             sumIcon:SetVertexColor(1, 1, 1)
             sumIcon:SetTexture("Interface\\Icons\\inv_harvestgolempet")
         else
-            sumBg:SetTexture(0.1, 0.3, 0.15, 0.7)
+            sumBg:SetTexture(0.45, 0.12, 0.1, 0.7)  -- red when OFF
             sumIcon:SetVertexColor(1, 0.85, 0.85)
             sumIcon:SetTexture("Interface\\Icons\\inv_harvestgolempet")
         end
@@ -5169,6 +5252,8 @@ local function CreateMainFrame()
     title:SetPoint("LEFT", titleBar, "LEFT", 8, 0)
     title:SetText("|cffff0000Fugazi|r Instance Tracker")
     title:SetTextColor(1, 0.85, 0.4, 1)
+    f.titleBar = titleBar
+    f.fitTitle = title
 
     -- Close button: stay closed until user opens via /fit or minimap (no auto-show)
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
@@ -5218,6 +5303,7 @@ local function CreateMainFrame()
         GameTooltip:Show()
     end)
     collapseBtn:SetScript("OnLeave", function() UpdateCollapseButton(); GameTooltip:Hide() end)
+    f.collapseBtn = collapseBtn
 
     -- Stats button
     local statsBtn = CreateFrame("Button", nil, f)
@@ -5266,6 +5352,7 @@ local function CreateMainFrame()
         self.label:SetText("|cff66dd88Stats|r")
         GameTooltip:Hide()
     end)
+    f.statsBtn = statsBtn
 
     -- Reset button
     local resetBtn = CreateFrame("Button", nil, f)
@@ -5299,6 +5386,7 @@ local function CreateMainFrame()
         self.label:SetText("|cffff8844Reset ID|r")  -- ← Normal text
         GameTooltip:Hide()
     end)
+    f.resetBtn = resetBtn
 
     -- GPH button
     local gphBtn = CreateFrame("Button", nil, f)
@@ -5328,6 +5416,7 @@ local function CreateMainFrame()
         self.label:SetText("|cffdaa520GPH|r")
         GameTooltip:Hide()
     end)
+    f.gphBtn = gphBtn
 
     -- Hourly counter
     local hourlyText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -5337,6 +5426,7 @@ local function CreateMainFrame()
     f.hourlyText = hourlyText
 
     local sep = f:CreateTexture(nil, "ARTWORK")
+    f.sep = sep
     sep:SetHeight(1)
     sep:SetPoint("TOPLEFT", hourlyText, "BOTTOMLEFT", 0, -6)
     sep:SetPoint("TOPRIGHT", hourlyText, "BOTTOMRIGHT", 0, -6)
@@ -5350,6 +5440,13 @@ local function CreateMainFrame()
     content:SetHeight(1)
     scrollFrame:SetScrollChild(content)
     f.content = content
+
+    f.ApplySkin = function()
+        if _G.__FugaziInstanceTracker_Skins and _G.__FugaziInstanceTracker_Skins.ApplyMain then
+            _G.__FugaziInstanceTracker_Skins.ApplyMain(f)
+        end
+    end
+    f:ApplySkin()
     return f
 end
 
@@ -5604,12 +5701,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local addonName = (select(1, ...)) or ""
         if addonName:lower():find("fugazibags") then
             RunAddonLoader()
-            ApplyBagKeyOverride()
         end
     elseif event == "PLAYER_LOGIN" then
-        -- Always run loader on login so keybind + bag hook work even if ADDON_LOADED didn't match
         RunAddonLoader()
-        ApplyBagKeyOverride()
         -- GPH-only init (no main frame, no instance tracking)
         if not _G.InstanceTrackerKeybindOwner then
             _G.InstanceTrackerKeybindOwner = CreateFrame("Frame", "InstanceTrackerKeybindOwner", UIParent)
@@ -5619,8 +5713,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             Addon.SyncGPHSessionFromDB()
         end
         if DB.gphCollapsed == nil then DB.gphCollapsed = false end
-        if _G.TestGPHFrame then gphFrame = _G.TestGPHFrame end
-        if not gphFrame then gphFrame = CreateGPHFrame() end
+        -- Always create our own frame and claim the global. When InstanceTracker is loaded it may have set TestGPHFrame to its (old) frame; reusing that breaks the autosell button (no UpdateInvBtn).
+        gphFrame = CreateGPHFrame()
+        _G.TestGPHFrame = gphFrame
+        _G.ToggleGPHFrame = function()
+            if gphFrame then
+                if gphFrame:IsShown() then gphFrame:Hide() else gphFrame:Show() end
+            end
+        end
         if Addon.InstallGPHInvHook then Addon.InstallGPHInvHook() end
         Addon.RestoreFrameLayout(gphFrame, "gphShown", "gphPoint")
         local SV = _G.FugaziBAGSDB
@@ -5639,62 +5739,87 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             gphFrame.gphSelectedItemLink = nil
             RefreshGPHUI()
         end
-        -- When default bank opens: move it off-screen, hide Blizzard bags, and show our bank window (ElvUI-style)
+        -- When default bank opens: move it off-screen, hide Blizzard bags, and show our bank window (ElvUI-style).
+        -- Hook BankFrame.Show if it exists now; also install hook later in case BankFrame is created when bank first opens.
+        local function doShowFugaziBank()
+            if not Addon or not Addon.HideBlizzardBags then return end
+            Addon.HideBlizzardBags(true)
+            if _G.BankFrame then
+                _G.BankFrame:ClearAllPoints()
+                _G.BankFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -5000, -5000)
+                _G.BankFrame:SetAlpha(0)
+                _G.BankFrame:EnableMouse(false)
+            end
+            local inv = gphFrame or _G.TestGPHFrame
+            local bf = _G.TestBankFrame
+            if not bf and CreateBankFrame then
+                local ok, result = pcall(CreateBankFrame, inv)
+                if ok and result then bf = result
+                elseif not ok and Addon.AddonPrint then Addon.AddonPrint("[Bank] CreateBankFrame error: " .. tostring(result)) end
+            end
+            if bf then
+                _G.TestBankFrame = bf
+                bf._refreshImmediate = true
+                if inv then
+                    bf:SetParent(inv)
+                    bf:SetScale(1)
+                    inv:Show()
+                    if RefreshGPHUI then RefreshGPHUI() end
+                    do
+                        local p, _, rp, x, y = inv:GetPoint(1)
+                        if not (p == "TOPLEFT" and rp == "TOP" and x == 2 and y == -80) then
+                            Addon.SaveFrameLayout(inv, "gphShown", "gphPoint")
+                        end
+                    end
+                    inv:ClearAllPoints()
+                    inv:SetPoint("TOPLEFT", UIParent, "TOP", 2, -80)
+                else
+                    bf:SetParent(UIParent)
+                    bf:SetScale(1)
+                end
+                bf:ClearAllPoints()
+                if inv then bf:SetPoint("TOPRIGHT", inv, "TOPLEFT", -4, 0)
+                else bf:SetPoint("TOP", UIParent, "CENTER", 200, -100) end
+                bf:Show()
+                if bf.bankTitleText then
+                    bf.bankTitleText:SetText((UnitName and UnitName("target")) or "Bank")
+                end
+                if RefreshBankUI then RefreshBankUI() end
+                local d = CreateFrame("Frame")
+                d._count = 0
+                d:SetScript("OnUpdate", function(self)
+                    Addon.HideBlizzardBags(true)
+                    self._count = (self._count or 0) + 1
+                    if self._count == 1 then StealthHideElvUIBank() end
+                    if self._count >= 8 then self:SetScript("OnUpdate", nil) end
+                end)
+            end
+        end
         if BankFrame and BankFrame.Show then
             local origShow = BankFrame.Show
             BankFrame.Show = function(self)
                 origShow(self)
-                Addon.HideBlizzardBags(true)
-                self:ClearAllPoints()
-                self:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -5000, -5000)
-                self:SetAlpha(0)
-                self:EnableMouse(false)
-                local inv = gphFrame or _G.TestGPHFrame
-                local bf = _G.TestBankFrame
-                if not bf and CreateBankFrame then
-                    local ok, result = pcall(CreateBankFrame, inv)
-                    if ok and result then bf = result
-                    elseif not ok and Addon.AddonPrint then Addon.AddonPrint("[Bank] CreateBankFrame error: " .. tostring(result)) end
-                end
-                if bf then
-                    _G.TestBankFrame = bf
-                    bf._refreshImmediate = true  -- first refresh when opening bank is not debounced
-                    if inv then
-                        bf:SetParent(inv)
-                        bf:SetScale(1)  -- inherit parent scale only
-                        inv:Show()
-                        if RefreshGPHUI then RefreshGPHUI() end
-                        -- Save user position before moving for bank (so /reload restores it); skip if already at bank layout so we don't overwrite good data
-                        do
-                            local p, _, rp, x, y = inv:GetPoint(1)
-                            if not (p == "TOPLEFT" and rp == "TOP" and x == 2 and y == -80) then
-                                Addon.SaveFrameLayout(inv, "gphShown", "gphPoint")
-                            end
-                        end
-                        inv:ClearAllPoints()
-                        inv:SetPoint("TOPLEFT", UIParent, "TOP", 2, -80)
-                    else
-                        bf:SetParent(UIParent)
-                        bf:SetScale(1)
-                    end
-                    bf:ClearAllPoints()
-                    if inv then bf:SetPoint("TOPRIGHT", inv, "TOPLEFT", -4, 0)
-                    else bf:SetPoint("TOP", UIParent, "CENTER", 200, -100) end
-                    bf:Show()
-                    if RefreshBankUI then RefreshBankUI() end
-                    -- ElvUI shows its bank on BANKFRAME_OPENED; stealth-hide it (don't call :Hide() — that closes the bank)
-                    -- Keep forcing Blizzard bags hidden (game may show them a moment later)
-                    local defer = CreateFrame("Frame")
-                    defer._count = 0
-                    defer:SetScript("OnUpdate", function(self)
-                        Addon.HideBlizzardBags(true)
-                        self._count = (self._count or 0) + 1
-                        if self._count == 1 then StealthHideElvUIBank() end
-                        if self._count >= 8 then self:SetScript("OnUpdate", nil) end
-                    end)
-                end
+                doShowFugaziBank()
             end
         end
+        -- BankFrame may not exist at login on some clients; hook it when it appears.
+        if hooksecurefunc then
+            local bankHookInstaller = CreateFrame("Frame")
+            bankHookInstaller._t = 0
+            bankHookInstaller:SetScript("OnUpdate", function(self, elapsed)
+                self._t = self._t + elapsed
+                if self._t > 5 then
+                    self:SetScript("OnUpdate", nil)
+                    return
+                end
+                if _G.BankFrame and _G.BankFrame.Show and not _G.FugaziBAGS_BankShowHooked then
+                    _G.FugaziBAGS_BankShowHooked = true
+                    hooksecurefunc(_G.BankFrame, "Show", doShowFugaziBank)
+                    self:SetScript("OnUpdate", nil)
+                end
+            end)
+        end
+        _G.FugaziBAGS_DoShowBank = doShowFugaziBank
         Addon.HideBlizzardBags()
         local defer = CreateFrame("Frame")
         defer:SetScript("OnUpdate", function(self, elapsed)
@@ -5719,70 +5844,23 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- (no instance tracking in Test)
 
     elseif event == "BANKFRAME_OPENED" then
-        -- Hide default bank frame and Blizzard bag windows (do NOT CloseAllBags - that closes the bank)
-        Addon.HideBlizzardBags(true)
-        if _G.BankFrame then
-            _G.BankFrame:ClearAllPoints()
-            _G.BankFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -5000, -5000)
-            _G.BankFrame:SetAlpha(0)
-            _G.BankFrame:EnableMouse(false)
-        end
-        local inv = gphFrame or _G.TestGPHFrame
-        local bf = _G.TestBankFrame
-        if not bf and CreateBankFrame then
-            local ok, result = pcall(CreateBankFrame, inv)
-            if ok and result then bf = result
-            elseif not ok and Addon.AddonPrint then Addon.AddonPrint("[Bank] CreateBankFrame error: " .. tostring(result)) end
-        end
-        if bf then
-            _G.TestBankFrame = bf
-            if inv then
-                bf:SetParent(inv)
-                bf:SetScale(1)  -- inherit parent scale only
-                inv:Show()
-                if RefreshGPHUI then RefreshGPHUI() end
-                -- Save user position before moving for bank; skip if already at bank layout so we don't overwrite good data
-                do
-                    local p, _, rp, x, y = inv:GetPoint(1)
-                    if not (p == "TOPLEFT" and rp == "TOP" and x == 2 and y == -80) then
-                        Addon.SaveFrameLayout(inv, "gphShown", "gphPoint")
-                    end
-                end
-                inv:ClearAllPoints()
-                inv:SetPoint("TOPLEFT", UIParent, "TOP", 2, -80)
-            else
-                bf:SetParent(UIParent)
-                bf:SetScale(1)
-            end
-            bf:ClearAllPoints()
-            if inv then bf:SetPoint("TOPRIGHT", inv, "TOPLEFT", -4, 0)
-            else bf:SetPoint("TOP", UIParent, "CENTER", 200, -100) end
-            bf:Show()
-            if bf.bankTitleText then
-                bf.bankTitleText:SetText((UnitName and UnitName("target")) or "Bank")
-            end
-            if RefreshBankUI then RefreshBankUI() end
-        end
-        -- ElvUI shows its bank in its own BANKFRAME_OPENED handler; stealth-hide it (deferred + retry)
-        -- Also re-hide Blizzard bags several times (game can show them a frame or two later)
+        if _G.FugaziBAGS_DoShowBank then _G.FugaziBAGS_DoShowBank() end
         do
-            local defer = CreateFrame("Frame")
-            defer:SetScript("OnUpdate", function(self, elapsed)
+            local d2 = CreateFrame("Frame")
+            d2:SetScript("OnUpdate", function(self, elapsed)
                 self._t = (self._t or 0) + elapsed
                 if not self._doneFirst then
                     self._doneFirst = true
                     StealthHideElvUIBank()
                 end
-                Addon.HideBlizzardBags(true)
+                if Addon and Addon.HideBlizzardBags then Addon.HideBlizzardBags(true) end
                 if self._t >= 0.05 then
                     StealthHideElvUIBank()
-                    Addon.HideBlizzardBags(true)
+                    if Addon and Addon.HideBlizzardBags then Addon.HideBlizzardBags(true) end
                 end
-                if self._t >= 0.15 then
-                    Addon.HideBlizzardBags(true)
-                end
+                if self._t >= 0.15 and Addon and Addon.HideBlizzardBags then Addon.HideBlizzardBags(true) end
                 if self._t >= 0.4 then
-                    Addon.HideBlizzardBags(true)
+                    if Addon and Addon.HideBlizzardBags then Addon.HideBlizzardBags(true) end
                     self:SetScript("OnUpdate", nil)
                 end
             end)
@@ -5814,7 +5892,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
         if event == "MERCHANT_SHOW" then
             Addon.InstallGphGreedyMuteOnce()
-            if DB.gphAutoVendor then Addon.StartGphVendorRun() end
+            if _G.FugaziBAGSDB and _G.FugaziBAGSDB.gphAutoVendor then Addon.StartGphVendorRun() end
             if gphFrame and gphFrame.UpdateGphSummonBtn then gphFrame.UpdateGphSummonBtn() end
         end
     elseif event == "MERCHANT_CLOSED" then
