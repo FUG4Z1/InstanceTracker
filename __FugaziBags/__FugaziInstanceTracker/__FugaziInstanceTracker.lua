@@ -1,30 +1,47 @@
--- __FugaziInstanceTracker
--- Instance tracker (lockouts, ledger, skins). Single addon; no separate "core" required.
+--[[
+================================================================================
+  __FugaziInstanceTracker — by Fugazi | WoW 3.3.5a (WotLK)
+================================================================================
 
-----------------------------------------------------------------------
--- Fugazi Instance Tracker — by Fugazi
--- WoW 3.3.5a (WotLK)
---
--- • 5-instances-per-hour soft cap and countdown
--- • Saved lockouts by expansion (Classic, TBC, WotLK)
--- • Run ledger: duration, gold, items per run (current + history)
--- • Gold-Per-Hour (GPH) manual tracker: sessions, loot list, vendor/destroy
--- • Item detail popup (docks to Ledger or GPH), search, collapse
--- Data is account-wide (5/hr limit is per account).
-----------------------------------------------------------------------
+  WHAT THIS ADDON DOES (in WoW terms)
+  ----------------------------------
+  • Hourly cap: Tracks how many instances you've entered per hour (like the
+    dungeon finder limit). Shows "X/5" and a countdown until your next slot.
+  • Lockouts: Lists your saved raid/dungeon lockouts by expansion (Classic,
+    TBC, WotLK) — same idea as the calendar lockout list, but in a small window.
+  • Ledger: A "run log" — each time you leave a dungeon/raid we save one entry:
+    name, duration, gold earned, and items collected. You can click a run to see
+    the item list, rename runs, or Shift+right-click items to link them in chat.
+  • GPH (Gold Per Hour): Manual sessions you start/stop from __FugaziBAGS; when
+    both addons are loaded, "Stop session" saves the run into this Ledger.
+  • Item detail popup: When you click "Items" on a run, a second window shows
+    the list of items; it can dock next to the Ledger. Search and collapse.
+
+  DATA: The 5-per-hour limit is account-wide. Run history and settings are
+  saved so they survive /reload and logout.
+
+  This is a single addon — no separate "core" required.
+================================================================================
+]]
 
 local ADDON_NAME = "InstanceTracker"
+-- How many instance IDs you can "save" per real-world hour (soft cap; like dungeon finder).
 local MAX_INSTANCES_PER_HOUR = 5
 local HOUR_SECONDS = 3600
+-- Max Ledger entries we keep (oldest dropped when full; like a fixed-size logbook).
 local MAX_RUN_HISTORY = 100
--- Only restore a run from history if it ended within this many seconds (e.g. died and re-entered before instance reset).
-local MAX_RESTORE_AGE_SECONDS = 5 * 60  -- 5 minutes; after that treat as a new run
-local SCROLL_CONTENT_WIDTH = 296  -- viewport width for scroll content (no gap left of scrollbar)
-local GPH_MAX_STACK = 49  -- server max stack size; confirm when deleting more than this via red X
+-- If you die and re-enter the same instance within this time, we restore the same run instead of starting a new one.
+local MAX_RESTORE_AGE_SECONDS = 5 * 60  -- 5 minutes
+-- Width in pixels for scrollable list content (Ledger, item list, etc.); no gap left of scrollbar.
+local SCROLL_CONTENT_WIDTH = 296
+-- WoW stack limit; used when confirming "delete all" so we don't try to delete more than one stack at a time.
+local GPH_MAX_STACK = 49
 
--- Optional shared skin with __FugaziBAGS ("original" vs "elvui").
--- When __FugaziBAGS is loaded, we read FugaziBAGSDB.gphSkin and apply the
--- same style to the InstanceTracker main window.
+----------------------------------------------------------------------
+-- Skins: visual theme for the tracker/Ledger windows (like choosing
+-- "Classic" vs "ElvUI" style). When __FugaziBAGS is loaded we can match
+-- its skin so both addons look the same.
+----------------------------------------------------------------------
 local IT_SKIN = {
     original = {
         mainBackdrop = {
@@ -37,6 +54,7 @@ local IT_SKIN = {
         mainBorder = { 0.6, 0.5, 0.2, 0.8 },
         titleBackdrop = { bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = nil, tile = true, tileSize = 16, edgeSize = 0, insets = { left = 0, right = 0, top = 0, bottom = 0 } },
         titleBg = { 0.35, 0.28, 0.1, 0.7 },
+        btnNormal = { 0.1, 0.3, 0.15, 0.7 },
         titleTextColor = { 1, 0.85, 0.4, 1 },
         sepColor = { 1, 1, 1, 0.15 },
         hourlyTextColor = { 1, 0.85, 0.4, 1 },
@@ -52,6 +70,7 @@ local IT_SKIN = {
         mainBorder = { 0.2, 0.2, 0.2, 1 },
         titleBackdrop = { bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = nil, tile = true, tileSize = 16, edgeSize = 0, insets = { left = 0, right = 0, top = 0, bottom = 0 } },
         titleBg = { 0.157, 0.239, 0.239, 0.95 },  -- #283d3d
+        btnNormal = { 0.1, 0.3, 0.15, 0.7 },
         titleTextColor = { 0.6, 0.85, 0.85, 1 },
         sepColor = { 0.18, 0.31, 0.31, 0.4 },
         hourlyTextColor = { 0.6, 0.85, 0.85, 1 },
@@ -67,6 +86,7 @@ local IT_SKIN = {
         mainBorder = { 0.12, 0.12, 0.12, 1 },
         titleBackdrop = { bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = nil, tile = true, tileSize = 16, edgeSize = 0, insets = { left = 0, right = 0, top = 0, bottom = 0 } },
         titleBg = { 0.10, 0.10, 0.10, 0.98 },
+        btnNormal = { 0.18, 0.18, 0.18, 0.9 },
         titleTextColor = { 0.9, 0.9, 0.9, 1 },
         sepColor = { 0.20, 0.20, 0.20, 0.5 },
         hourlyTextColor = { 0.8, 0.8, 0.8, 1 },
@@ -85,16 +105,17 @@ local IT_SKIN = {
         -- Title bar uses Leopard directly as a tiled backdrop (no stretch), same opacity as bags.
         titleBackdrop = { bgFile = "Interface\\AddOns\\__FugaziBAGS\\media\\Leopard", edgeFile = nil, tile = true, tileSize = 256, edgeSize = 0, insets = { left = 0, right = 0, top = 0, bottom = 0 } },
         titleBg = { 1, 1, 1, 0.72 },
+        btnNormal = { 0.65, 0.45, 0.15, 0.95 },
         titleTextColor = { 1.0, 0.90, 1.0, 1 },
         sepColor = { 0.70, 0.50, 0.90, 0.5 },
         hourlyTextColor = { 0.95, 0.85, 1.0, 1 },
     },
 }
 
+--- Applies the selected skin (colors, backdrop) to a frame. Uses IT_SKIN so it works even when __FugaziBAGS is disabled.
 local function ApplyInstanceTrackerSkin(f)
     if not f then return end
-
-    -- Always use FIT's own skin table (IT_SKIN) so skins work even when BAGS is disabled.
+    -- Read saved preference; fallback to "original" if invalid.
     -- The dropdown writes InstanceTrackerDB.fitSkin, and this function reads it directly.
     local val = InstanceTrackerDB.fitSkin or "original"
     if val ~= "original" and val ~= "elvui" and val ~= "elvui_real" and val ~= "pimp_purple" then
@@ -153,35 +174,38 @@ local function ApplyInstanceTrackerSkin(f)
     setBtn(f.gphBtn)
 end
 
+----------------------------------------------------------------------
+-- SavedVariables: persisted across /reload and logout (like keybinds).
+-- InstanceTrackerDB holds all user settings and run history.
+----------------------------------------------------------------------
 InstanceTrackerDB = InstanceTrackerDB or {}
-if InstanceTrackerDB.fitMute == nil then InstanceTrackerDB.fitMute = false end
-if InstanceTrackerDB.fitSkin == nil then InstanceTrackerDB.fitSkin = "original" end
+if InstanceTrackerDB.fitMute == nil then InstanceTrackerDB.fitMute = false end          -- /fit mute: no chat spam
+if InstanceTrackerDB.fitSkin == nil then InstanceTrackerDB.fitSkin = "original" end     -- Window look (original, elvui, pimp_purple)
 if InstanceTrackerDB.gphInvKeybind == nil then InstanceTrackerDB.gphInvKeybind = true end
--- One-time: ensure B opens Fugazi inventory (was default false; many users expect bags on B)
 if InstanceTrackerDB.gphInvKeybindMigrated ~= true then
     InstanceTrackerDB.gphInvKeybindMigrated = true
-    InstanceTrackerDB.gphInvKeybind = true
+    InstanceTrackerDB.gphInvKeybind = true   -- One-time: default B key to open Fugazi inventory
 end
-if InstanceTrackerDB.gphAutoVendor == nil then InstanceTrackerDB.gphAutoVendor = true end
+if InstanceTrackerDB.gphAutoVendor == nil then InstanceTrackerDB.gphAutoVendor = true end  -- Auto-sell greys at vendor
 if InstanceTrackerDB.gphScale15 == nil then InstanceTrackerDB.gphScale15 = false end
-if InstanceTrackerDB.gphDestroyList == nil then InstanceTrackerDB.gphDestroyList = {} end
+if InstanceTrackerDB.gphDestroyList == nil then InstanceTrackerDB.gphDestroyList = {} end  -- Autodelete list (itemId -> info)
 if InstanceTrackerDB.gphPreviouslyWornItemIds == nil then InstanceTrackerDB.gphPreviouslyWornItemIds = {} end
--- (*) Protected items per character (survives relog/reload).
+-- Per-character "never sell/delete" list (e.g. soul shard, hearthstone).
 InstanceTrackerDB.gphProtectedItemIdsPerChar = InstanceTrackerDB.gphProtectedItemIdsPerChar or {}
--- Rarity whitelist per character: [charKey][quality] = true means all items of that rarity are protected (separate from per-item; toggle off releases them, per-item stays)
+-- Per-character "protect all of this rarity" (e.g. "protect all blues"); toggled via rarity bar.
 InstanceTrackerDB.gphProtectedRarityPerChar = InstanceTrackerDB.gphProtectedRarityPerChar or {}
--- Item type cache for category sort (itemId -> "Weapon" etc.); persists in saved vars to avoid repeated GetItemInfo.
+-- Cache: itemId -> "Weapon"/"Armor"/etc. for category sort; avoids hammering GetItemInfo.
 InstanceTrackerDB.gphItemTypeCache = InstanceTrackerDB.gphItemTypeCache or {}
 if InstanceTrackerDB.gphCollapseDebug == nil then InstanceTrackerDB.gphCollapseDebug = false end
 
---- Realm#Character key for per-char DB.
+--- Returns a unique key for this character (Realm#Name) so we store protected items and settings per toon.
 local function GetGphCharKey()
     local r = (GetRealmName and GetRealmName()) or ""
     local c = (UnitName and UnitName("player")) or ""
     return (r or "") .. "#" .. (c or "")
 end
 
---- Returns the current character's (*) protected item set (read/write). Migrates from older account-wide list on first use.
+--- Returns this character's "never sell/delete" list (e.g. soul shard). Migrates from old account-wide list once.
 local function GetGphProtectedSet()
     if not InstanceTrackerDB.gphProtectedItemIdsPerChar then
         InstanceTrackerDB.gphProtectedItemIdsPerChar = {}
@@ -198,7 +222,7 @@ local function GetGphProtectedSet()
     return InstanceTrackerDB.gphProtectedItemIdsPerChar[key]
 end
 
---- Returns the set of item IDs that were auto-protected because they left equipment slots (soul icon only; not per-item or rarity blacklist).
+--- Items that were in your equipment slots and left (e.g. swapped weapon); we auto-protect those so rarity delete doesn't touch them.
 local function GetGphPreviouslyWornOnlySet()
     if not InstanceTrackerDB.gphPreviouslyWornOnlyPerChar then InstanceTrackerDB.gphPreviouslyWornOnlyPerChar = {} end
     local key = GetGphCharKey()
@@ -208,7 +232,7 @@ local function GetGphPreviouslyWornOnlySet()
     return InstanceTrackerDB.gphPreviouslyWornOnlyPerChar[key]
 end
 
---- Get current character's rarity whitelist (quality -> true). When true, all items of that quality are protected until toggled off; per-item list is separate and sticky.
+--- Returns "protect all of this rarity" flags (e.g. "protect all blues"). Toggled via the rarity bar; per-item list is separate.
 local function GetGphProtectedRarityFlags()
     if not InstanceTrackerDB.gphProtectedRarityPerChar then InstanceTrackerDB.gphProtectedRarityPerChar = {} end
     local key = GetGphCharKey()
@@ -218,7 +242,7 @@ local function GetGphProtectedRarityFlags()
     return InstanceTrackerDB.gphProtectedRarityPerChar[key]
 end
 
---- Global API: true if item is protected (per-item whitelist OR rarity whitelist for its quality). Optional qualityArg avoids nil from GetItemInfo when uncached.
+--- Global API for other addons: true if this item should not be sold/deleted (per-item or rarity protection).
 local function IsItemProtectedAPI(itemId, qualityArg)
     if not itemId then return false end
     local set = GetGphProtectedSet and GetGphProtectedSet()
@@ -274,8 +298,7 @@ local function ApplyGPHInvKeyOverride(btn)
     -- No-op: bag key override is now provided by __FugaziBAGS.
 end
 
---- Save a frame's position to DB (for /reload restore). Stores point, relativePoint, x, y (restore uses UIParent).
---- For itemDetailPoint we always save absolute screen coords so docked position doesn't restore as top-right.
+--- Saves a window's position (and optionally "was it open?") so after /reload we can put it back. Like the game remembering where you dragged the spellbook.
 local function SaveFrameLayout(frame, shownKey, pointKey)
     if not frame then return end
     if pointKey == "itemDetailPoint" then
@@ -296,7 +319,7 @@ local function SaveFrameLayout(frame, shownKey, pointKey)
     end
 end
 
---- Restore a frame's position and optionally visibility from DB.
+--- Restores a window's position (and show/hide) from saved data after /reload.
 local function RestoreFrameLayout(frame, shownKey, pointKey)
     if not frame then return end
     local pt = InstanceTrackerDB[pointKey]
@@ -315,8 +338,7 @@ local function RestoreFrameLayout(frame, shownKey, pointKey)
     return false
 end
 
---- When collapsing, keep the frame's top fixed so the title bar (and collapse button) doesn't jump.
---- If isSnappedTo(relTo) returns true for the frame's first anchor, only SetHeight; else re-anchor TOPLEFT at current position then SetHeight.
+--- Shrinks a window (collapse) without it jumping: keeps the top edge in place so the title bar stays under your cursor.
 local function CollapseInPlace(frame, collapsedHeight, isSnappedTo)
     if not frame then return end
     local debug = InstanceTrackerDB.gphCollapseDebug
@@ -345,58 +367,58 @@ local function CollapseInPlace(frame, collapsedHeight, isSnappedTo)
     end
 end
 
---- Display name for a run (custom name or zone name).
+--- Returns the label for a run in the Ledger: custom name if you renamed it, otherwise the zone name (e.g. "Utgarde Keep").
 local function GetRunDisplayName(run)
     if not run then return "?" end
     if run.customName and run.customName:match("%S") then return run.customName end
     return run.name or "?"
 end
 
---- Print to chat; respects /fit mute.
+--- Prints a message to chat (yellow addon text). Does nothing if /fit mute is on.
 local function AddonPrint(msg)
     if msg and msg ~= "" and not InstanceTrackerDB.fitMute then
         DEFAULT_CHAT_FRAME:AddMessage(msg)
     end
 end
 
--- Runtime state
-local frame = nil
-local statsFrame = nil
-local itemDetailFrame = nil
+----------------------------------------------------------------------
+-- Runtime state: what the addon "remembers" while you play (not saved).
+-- Frames = the actual UI windows; the rest = data for current session.
+----------------------------------------------------------------------
+local frame = nil              -- Main tracker window (lockouts + hourly cap)
+local statsFrame = nil          -- Ledger window (run history list)
+local itemDetailFrame = nil     -- Popup that shows "items from this run"
 local isInInstance = false
 local currentZone = ""
 
--- Lockout snapshot
+-- Lockout snapshot: when we last asked the game for saved lockouts (to avoid spamming).
 local lockoutQueryTime = 0
 local lockoutCache = {}
 
--- Current run tracking (runtime only, finalized on exit)
+-- Current run: the dungeon/raid you're in right now (saved to Ledger when you leave).
 local currentRun = nil
-local lastExitedZoneName = nil  -- zone name when we last finalized; used to drop that run from history on instance reset chat
+local lastExitedZoneName = nil  -- Used to remove a run from history if instance reset message appears
 
--- Bag tracking (additive-only)
-local bagBaseline = {}       -- { [itemId] = count } snapshot on enter
-local itemsGained = {}       -- { [itemId] = count } only increases, never decreases
-local itemLinksCache = {}    -- { [itemId] = link } runtime cache
-local lastEquippedItemIds = {}  -- item IDs that were in equipment slots last diff; gains for these are from unequip, not loot
+-- Bag tracking for "items gained this run": we take a snapshot when you enter, then only count increases (like a diff).
+local bagBaseline = {}         -- Snapshot on enter: itemId -> count
+local itemsGained = {}         -- Only goes up; used for "loot this run"
+local itemLinksCache = {}      -- itemId -> full item link (so we can show names without calling GetItemInfo every time)
+local lastEquippedItemIds = {} -- Items that were in equipment slots; if they appear in bags we treat as "unequipped" not "looted"
 
--- Gold tracking
-local startingGold = 0
+local startingGold = 0          -- Gold when you entered the instance (to show "earned this run")
 
--- GPH session (manual, works anywhere)
-local gphSession = nil   -- { startTime, startGold, items, qualityCounts }
+-- GPH (Gold Per Hour) manual session: owned by __FugaziBAGS; we just show/record when both addons loaded.
+local gphSession = nil
 local gphBagBaseline = {}
 local gphItemsGained = {}
-local gphFrame = nil
+local gphFrame = nil            -- The GPH/inventory frame is created by __FugaziBAGS
 
--- Double-click on X to delete (itemId -> GetTime() of first click, 0.5s window)
-local gphDeleteClickTime = gphDeleteClickTime or {}
--- Shift+double-click on X to toggle destroy list (itemId -> GetTime() of first click)
+-- Autodelete / destroy list: double-click red X = delete from bags; Shift+double-click = add to "destroy list".
+local gphDeleteClickTime = gphDeleteClickTime or {}   -- First click time per item (0.5s window for second click)
 local gphDestroyClickTime = gphDestroyClickTime or {}
--- Queue for deferred auto-destroy; processed by dedicated frame with throttle (like SimpleAutoDelete-WOTLK)
-local gphDestroyQueue = {}
+local gphDestroyQueue = {}      -- Items waiting to be destroyed (throttled so we don't spam the server)
 local gphDestroyerThrottle = 0
-local GPH_DESTROY_DELAY = 0.4
+local GPH_DESTROY_DELAY = 0.4   -- Seconds between each queued destroy (like SimpleAutoDelete)
 
 -- Dedicated frame for auto-destroy (delay like SimpleAutoDelete-WOTLK so DeleteCursorItem runs in a valid context)
 local gphDestroyerFrame = nil
@@ -512,7 +534,7 @@ local function DeleteAllOfQuality(quality)
     end
 end
 
--- Quality labels & colors
+-- Item quality = WoW's grey/white/green/blue/purple/orange. We use these for colors and labels in the UI.
 local QUALITY_COLORS = {
     [0] = { r = 0.62, g = 0.62, b = 0.62, hex = "9d9d9d", label = "Trash" },         
     [1] = { r = 1.00, g = 1.00, b = 1.00, hex = "ffffff", label = "White" },
@@ -523,7 +545,8 @@ local QUALITY_COLORS = {
 }
 
 ----------------------------------------------------------------------
--- Instance database: maps instance name -> expansion
+-- Instance database: "which expansion does this dungeon belong to?"
+-- Used to group lockouts (Classic / TBC / WotLK) and show the right label.
 ----------------------------------------------------------------------
 local INSTANCE_EXPANSION = {
     -- ==================== CLASSIC DUNGEONS ====================
@@ -706,9 +729,9 @@ local function GetExpansion(instanceName)
 end
 
 ----------------------------------------------------------------------
--- Formatting and utility
+-- Formatting: turn numbers into readable text (time, gold, quality colors).
 ----------------------------------------------------------------------
---- Time as "Xd Xm Xs" or "Ready".
+--- Countdown timer: "5m 30s" or "Ready" when zero (like the hourly cap next-slot display).
 local function FormatTime(seconds)
     if seconds <= 0 then return "Ready" end
     local h = math.floor(seconds / 3600)
@@ -719,7 +742,7 @@ local function FormatTime(seconds)
     else return string.format("%ds", s) end
 end
 
---- Shorter time string (e.g. "5m 30s").
+--- Short duration: "5m 30s" (used in Ledger and run tooltips).
 local function FormatTimeMedium(seconds)
     if seconds <= 0 then return "0s" end
     local h = math.floor(seconds / 3600)
@@ -730,7 +753,7 @@ local function FormatTimeMedium(seconds)
     else return string.format("%ds", s) end
 end
 
---- Copper to colored "Xg Xs Xc" string.
+--- Turns copper into colored "Xg Xs Xc" (gold/silver/copper) for display.
 local function FormatGold(copper)
     if not copper or copper <= 0 then return "|cffeda55f0c|r" end
     local g = math.floor(copper / 10000)
@@ -859,6 +882,7 @@ local function AnchorTooltipRight(ownerFrame)
     GameTooltip:SetPoint("LEFT", host, "RIGHT", TOOLTIP_FRAME_GAP, 0)
 end
 
+--- Format quality counts for Ledger: numbers only in rarity color (no "Trash"/"Green"/"Blue" labels) to save space.
 local function FormatQualityCounts(qc)
     if not qc then return "" end
     local parts = {}
@@ -867,7 +891,7 @@ local function FormatQualityCounts(qc)
         if count and count > 0 then
             local info = QUALITY_COLORS[q]
             if info then
-                table.insert(parts, "|cff" .. info.hex .. count .. " " .. info.label .. "|r")
+                table.insert(parts, "|cff" .. info.hex .. count .. "|r")
             end
         end
     end
@@ -875,7 +899,7 @@ local function FormatQualityCounts(qc)
     return table.concat(parts, "  ")
 end
 
---- Remove instance entries older than 1 hour from recentInstances.
+--- Drops instance entries older than 1 hour from the "recent instances" list (so the X/5 count is accurate).
 local function PurgeOld()
     local now = time()
     local fresh = {}
@@ -964,7 +988,7 @@ local function ScanBags()
     return counts
 end
 
---- Snapshot bags as baseline when starting a run.
+--- Takes a snapshot of your bags when you enter a dungeon; we compare later to see what you looted this run.
 local function SnapshotBags()
     bagBaseline = ScanBags()
     itemsGained = {}
@@ -983,8 +1007,7 @@ local function GetEquippedItemIds()
     return ids
 end
 
---- Update itemsGained from current bags vs baseline; updates currentRun (dungeon run).
---- (*) protected items and hearthstone never count as "loot gained" for the run (lightweight: one lookup).
+--- Compares current bags to the snapshot we took when you entered; adds any increase to "items gained this run". Protected items and hearthstone don't count as loot.
 local function DiffBags()
     local current = ScanBags()
     local currentEquipped = GetEquippedItemIds()
@@ -1185,8 +1208,8 @@ end
 
 --- API for __FugaziBAGS: record a GPH session into the InstanceTracker ledger when both addons are loaded.
 --- Called by BAGS when user stops a session from the inventory (play/stop button).
---- Signature: (startTime, endTime, startGold, goldEarned, itemList, qualityCounts)
-_G.FugaziInstanceTracker_RecordGPHRun = function(startTime, endTime, startGold, goldEarned, itemList, qualityCounts)
+--- Signature: (startTime, endTime, startGold, goldEarned, itemList, qualityCounts [, estimatedValueCopper [, estimatedGPHCopper ]])
+_G.FugaziInstanceTracker_RecordGPHRun = function(startTime, endTime, startGold, goldEarned, itemList, qualityCounts, estimatedValueCopper, estimatedGPHCopper)
     if not startTime or not endTime or not InstanceTrackerDB then return end
     local dur = endTime - startTime
     local run = {
@@ -1197,6 +1220,8 @@ _G.FugaziInstanceTracker_RecordGPHRun = function(startTime, endTime, startGold, 
         goldCopper = goldEarned or 0,
         qualityCounts = qualityCounts or {},
         items = itemList or {},
+        estimatedValueCopper = estimatedValueCopper,
+        estimatedGPHCopper = estimatedGPHCopper,
     }
     if not InstanceTrackerDB.runHistory then InstanceTrackerDB.runHistory = {} end
     table.insert(InstanceTrackerDB.runHistory, 1, run)
@@ -1307,10 +1332,10 @@ local function StartRun(name)
     )
 end
 
+--- Called when you leave the instance: saves the run to the Ledger (duration, gold, items) and clears current run state.
 local function FinalizeRun()
     if not currentRun then return end
     DiffBags()
-
     -- Gold earned = current money - starting money
     local goldEarned = GetMoney() - startingGold
     if goldEarned < 0 then goldEarned = 0 end
@@ -1372,8 +1397,8 @@ end
 
 --- API for _FugaziBAGS: record a GPH session into the run ledger when both addons are enabled.
 -- Called by _FugaziBAGS when the user stops a session in the bags window.
--- Params: startTime, endTime (from time()), startGold (copper), goldEarned (copper), itemList (array of {link, quality, count, name}), qualityCounts (table).
-function FugaziInstanceTracker_RecordGPHRun(startTime, endTime, startGold, goldEarned, itemList, qualityCounts)
+-- Params: startTime, endTime, startGold, goldEarned, itemList, qualityCounts [, estimatedValueCopper [, estimatedGPHCopper ]].
+function FugaziInstanceTracker_RecordGPHRun(startTime, endTime, startGold, goldEarned, itemList, qualityCounts, estimatedValueCopper, estimatedGPHCopper)
     if not startTime or not endTime then return end
     local anythingGained = (goldEarned and goldEarned > 0) or (itemList and #itemList > 0)
     if not anythingGained then return end
@@ -1385,6 +1410,8 @@ function FugaziInstanceTracker_RecordGPHRun(startTime, endTime, startGold, goldE
         goldCopper = goldEarned or 0,
         qualityCounts = qualityCounts or {},
         items = itemList or {},
+        estimatedValueCopper = estimatedValueCopper,
+        estimatedGPHCopper = estimatedGPHCopper,
     }
     if not InstanceTrackerDB.runHistory then InstanceTrackerDB.runHistory = {} end
     table.insert(InstanceTrackerDB.runHistory, 1, run)
@@ -1492,6 +1519,7 @@ local function ResetPools()
     TEXT_POOL_USED = 0
 end
 
+--- Ledger row/text pools: we reuse the same row and text frames instead of creating new ones each refresh (avoids memory leak and keeps UI snappy).
 local function ResetStatsPools()
     for i = 1, STATS_ROW_POOL_USED do
         if STATS_ROW_POOL[i] then
@@ -1652,9 +1680,10 @@ local function GetStatsText(parent)
 end
 
 ----------------------------------------------------------------------
--- Item Detail Popup
+-- Item Detail Popup: the window that shows "items from this run" when you
+-- click an Items row in the Ledger. Can dock next to Ledger; supports search.
 ----------------------------------------------------------------------
--- Fallback icon when item is not in cache (avoids red "?" from stale/invalid stored paths)
+-- If we don't have the item in cache we show a ? icon instead of a broken texture.
 local ITEM_ICON_FALLBACK = "Interface\\Icons\\INV_Misc_QuestionMark"
 local function GetSafeItemTexture(linkOrId, _storedTexture)
     local id = type(linkOrId) == "number" and linkOrId or nil
@@ -1675,12 +1704,14 @@ local function ResetItemBtnPool()
     ITEM_BTN_POOL_USED = 0
 end
 
+--- Gets a reusable row button from the pool for the item list (icon + name + count). Pool = we reuse rows instead of creating new ones every refresh (no leak).
 local function GetItemBtn(parent)
     ITEM_BTN_POOL_USED = ITEM_BTN_POOL_USED + 1
     local btn = ITEM_BTN_POOL[ITEM_BTN_POOL_USED]
     if not btn then
         btn = CreateFrame("Button", nil, parent)
         btn:EnableMouse(true)
+        btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
         btn:SetHitRectInsets(0, 0, 0, 0)
         btn:SetWidth(SCROLL_CONTENT_WIDTH)
         btn:SetHeight(18)
@@ -1706,7 +1737,51 @@ local function GetItemBtn(parent)
     btn:SetParent(parent)
     btn:Show()
     btn.itemLink = nil
+    if btn.RegisterForClicks then btn:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
     return btn
+end
+
+-- One handler per action so we don't create new closures every second when the item list is open (avoids memory leak).
+local function ItemDetailBtn_OnClick(self, button)
+    -- Shift+RMB only: open chat and link item
+    if not (IsShiftKeyDown() and button == "RightButton" and self.itemLink) then return end
+    local chatBox = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
+    if not chatBox and ChatEdit_ActivateChat and _G.ChatFrame1EditBox then
+        ChatEdit_ActivateChat(_G.ChatFrame1EditBox)
+        chatBox = _G.ChatFrame1EditBox
+    end
+    if not chatBox then
+        for ci = 1, NUM_CHAT_WINDOWS do
+            local eb = _G["ChatFrame" .. ci .. "EditBox"]
+            if eb and eb:IsVisible() then chatBox = eb; break end
+        end
+    end
+    if chatBox then chatBox:Insert(self.itemLink) end
+end
+local function ItemDetailBtn_OnEnter(self)
+    if self.itemLink then
+        AnchorTooltipRight(self)
+        local lp = self.itemLink:match("|H(item:[^|]+)|h")
+        if lp then GameTooltip:SetHyperlink(lp) end
+        GameTooltip:AddLine("From: " .. (self.runDisplayName or "?"), 0.6, 0.8, 0.6)
+        GameTooltip:AddLine("Shift+Right-click: link in chat", 0.5, 0.7, 0.5)
+        GameTooltip:Show()
+    end
+    if itemDetailFrame and itemDetailFrame.fromTooltip then
+        local ft = itemDetailFrame.fromTooltip
+        ft.text:SetText("From: " .. (self.runDisplayName or "?"))
+        local scale = UIParent:GetEffectiveScale()
+        local x, y = GetCursorPosition()
+        ft:ClearAllPoints()
+        ft:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", (x / scale) + 12, (y / scale) + 8)
+        ft:Show()
+    end
+end
+local function ItemDetailBtn_OnLeave()
+    GameTooltip:Hide()
+    if itemDetailFrame and itemDetailFrame.fromTooltip then
+        itemDetailFrame.fromTooltip:Hide()
+    end
 end
 
 local function CreateItemDetailFrame()
@@ -2028,43 +2103,9 @@ local function CreateItemDetailFrame()
             local qInfo = QUALITY_COLORS[item.quality] or QUALITY_COLORS[1]
             btn.nameFs:SetText("|cff" .. qInfo.hex .. (item.name or "Unknown") .. "|r")
             btn.countFs:SetText(item.count > 1 and ("|cffaaaaaa x" .. item.count .. "|r") or "")
-            btn:SetScript("OnClick", function(self, ...)
-                if IsShiftKeyDown() and self.itemLink then
-                    local chatBox = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
-                    if not chatBox then
-                        for ci = 1, NUM_CHAT_WINDOWS do
-                            local eb = _G["ChatFrame" .. ci .. "EditBox"]
-                            if eb and eb:IsVisible() then chatBox = eb; break end
-                        end
-                    end
-                    if chatBox then chatBox:Insert(self.itemLink) end
-                end
-            end)
-            btn:SetScript("OnEnter", function(self)
-                if self.itemLink then
-                    AnchorTooltipRight(self)
-                    local lp = self.itemLink:match("|H(item:[^|]+)|h")
-                    if lp then GameTooltip:SetHyperlink(lp) end
-                    GameTooltip:AddLine("From: " .. (self.runDisplayName or "?"), 0.6, 0.8, 0.6)
-                    GameTooltip:Show()
-                end
-                -- Second tooltip under the mouse: "From: session name"
-                if itemDetailFrame and itemDetailFrame.fromTooltip then
-                    local ft = itemDetailFrame.fromTooltip
-                    ft.text:SetText("From: " .. (self.runDisplayName or "?"))
-                    local scale = UIParent:GetEffectiveScale()
-                    local x, y = GetCursorPosition()
-                    ft:ClearAllPoints()
-                    ft:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", (x / scale) + 12, (y / scale) + 8)
-                    ft:Show()
-                end
-            end)
-            btn:SetScript("OnLeave", function()
-                GameTooltip:Hide()
-                if itemDetailFrame and itemDetailFrame.fromTooltip then
-                    itemDetailFrame.fromTooltip:Hide()
-                end
-            end)
+            btn:SetScript("OnClick", ItemDetailBtn_OnClick)
+            btn:SetScript("OnEnter", ItemDetailBtn_OnEnter)
+            btn:SetScript("OnLeave", ItemDetailBtn_OnLeave)
             yOff = yOff + 18
         end
         if #items == 0 then yOff = yOff + 4 end
@@ -2093,13 +2134,14 @@ local function CreateItemDetailFrame()
     return f
 end
 
+--- Opens (or updates) the item detail popup for a run. run = the run table (current or from history); liveSource = "currentRun" or "gph" if we should refresh the list every second.
 ShowItemDetail = function(run, liveSource)
     if not itemDetailFrame then itemDetailFrame = CreateItemDetailFrame() end
     local f = itemDetailFrame
     statsFrame = _G.InstanceTrackerStatsFrame
     local wasShown = f:IsShown()
     f.currentRun = run
-    f.liveSource = liveSource or nil  -- "currentRun" or "gph" or nil
+    f.liveSource = liveSource or nil
     if f.searchEditBox then
         f.searchText = (f.searchEditBox:GetText() or ""):match("^%s*(.-)%s*$")
     end
@@ -2327,7 +2369,8 @@ StaticPopupDialogs["GPH_DELETE_QUALITY"] = {
 }
 
 ----------------------------------------------------------------------
--- Stats Window
+-- Ledger (Stats) Window: the "run log" — current run + history list.
+-- CreateStatsFrame builds the window once; RefreshStatsUI fills it with rows.
 ----------------------------------------------------------------------
 local function CreateStatsFrame()
     local backdrop = {
@@ -2495,16 +2538,56 @@ local function CreateStatsFrame()
         stats_elapsed = stats_elapsed + elapsed
         if stats_elapsed >= 1 then
             stats_elapsed = 0
-            RefreshStatsUI()
-            RefreshItemDetailLive()
+            -- Only refresh when there is live data to update (current run duration/gold). When "no current run", Ledger is static — no need to redraw every second (avoids ~70 KB/s string allocation leak).
+            if currentRun then
+                RefreshStatsUI()
+                RefreshItemDetailLive()
+            end
         end
     end)
     return f
 end
 
 ----------------------------------------------------------------------
--- Refresh stats window
+-- Shared Ledger row handlers (no new closures per refresh = no memory leak when Ledger is open)
 ----------------------------------------------------------------------
+local function StatsRow1_OnMouseUp(self, button)
+    if button ~= "LeftButton" then return end
+    if self.deleteBtn and self.deleteBtn:IsMouseOver() then return end
+    if self.runRef then StaticPopup_Show("INSTANCETRACKER_RENAME_RUN", nil, nil, self.runRef) end
+end
+local function StatsRow1_OnEnter(self)
+    if self.deleteBtn and self.deleteBtn:IsMouseOver() then return end
+    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+    GameTooltip:AddLine("Click to rename", 0.5, 0.8, 1)
+    GameTooltip:Show()
+end
+local function StatsRow1_OnLeave() GameTooltip:Hide() end
+local function StatsRow1_Delete_OnClick(self)
+    local row = self:GetParent()
+    if row and row.deleteIdx then RemoveRunEntry(row.deleteIdx) end
+end
+local function StatsRow2_OnMouseUp(self)
+    if self.runRef then ShowItemDetail(self.runRef) end
+end
+local function StatsRow2_OnEnter(self)
+    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+    GameTooltip:AddLine("Click to view items", 0.7, 0.7, 0.7)
+    GameTooltip:Show()
+end
+local function StatsRow2_OnLeave() GameTooltip:Hide() end
+local function StatsCurrentRunItems_OnMouseUp()
+    local snap = BuildCurrentRunSnapshot()
+    if snap then ShowItemDetail(snap, "currentRun") end
+end
+local function StatsCurrentRunItems_OnEnter(self)
+    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+    GameTooltip:AddLine("Click to view items", 0.7, 0.7, 0.7)
+    GameTooltip:Show()
+end
+local function StatsCurrentRunItems_OnLeave() GameTooltip:Hide() end
+
+--- Redraws the Ledger: "Current run" block (if in instance) + history list. Uses pooled rows so we don't create new frames every second (avoids memory leak). Only runs every second when there is a current run; when Ledger is static we skip.
 RefreshStatsUI = function()
     if not statsFrame or not statsFrame:IsShown() then return end
     ResetStatsPools()
@@ -2548,16 +2631,9 @@ RefreshStatsUI = function()
 
         rItems.highlight:Show()
         rItems:EnableMouse(true)
-        rItems:SetScript("OnMouseUp", function()
-            local snap = BuildCurrentRunSnapshot()
-            if snap then ShowItemDetail(snap, "currentRun") end
-        end)
-        rItems:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-            GameTooltip:AddLine("Click to view items", 0.7, 0.7, 0.7)
-            GameTooltip:Show()
-        end)
-        rItems:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        rItems:SetScript("OnMouseUp", StatsCurrentRunItems_OnMouseUp)
+        rItems:SetScript("OnEnter", StatsCurrentRunItems_OnEnter)
+        rItems:SetScript("OnLeave", StatsCurrentRunItems_OnLeave)
         yOff = yOff + 15
     else
         hdr:SetText("|cff80c0ff--- Current Run ---|r")
@@ -2596,24 +2672,15 @@ RefreshStatsUI = function()
             local row1 = GetStatsRow(content, true)
             row1:SetPoint("TOPLEFT", content, "TOPLEFT", 4, -yOff)
             row1.runRef = run
+            row1.deleteIdx = i
             row1.left:SetText("|cff666666" .. i .. ".|r  |cffffffcc" .. GetRunDisplayName(run) .. "|r")
             local dateStr = (run.enterTime and FormatDateTime(run.enterTime) ~= "" and ("  |cff666666" .. FormatDateTime(run.enterTime) .. "|r")) or ""
             row1.right:SetText("|cffaaaaaa" .. FormatTimeMedium(dur) .. "|r" .. dateStr)
-            local delIdx = i
-            row1.deleteBtn:SetScript("OnClick", function() RemoveRunEntry(delIdx) end)
+            row1.deleteBtn:SetScript("OnClick", StatsRow1_Delete_OnClick)
             row1:EnableMouse(true)
-            row1:SetScript("OnMouseUp", function(self, button)
-                if button ~= "LeftButton" then return end
-                if self.deleteBtn and self.deleteBtn:IsMouseOver() then return end
-                StaticPopup_Show("INSTANCETRACKER_RENAME_RUN", nil, nil, self.runRef)
-            end)
-            row1:SetScript("OnEnter", function(self)
-                if self.deleteBtn and self.deleteBtn:IsMouseOver() then return end
-                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-                GameTooltip:AddLine("Click to rename", 0.5, 0.8, 1)
-                GameTooltip:Show()
-            end)
-            row1:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            row1:SetScript("OnMouseUp", StatsRow1_OnMouseUp)
+            row1:SetScript("OnEnter", StatsRow1_OnEnter)
+            row1:SetScript("OnLeave", StatsRow1_OnLeave)
             yOff = yOff + 14
 
             -- Line 2: items quality counts + gold on right (clickable); constrain left so it doesn't overlap gold
@@ -2621,7 +2688,8 @@ RefreshStatsUI = function()
             row2:SetPoint("TOPLEFT", content, "TOPLEFT", 18, -yOff)
             row2.left:ClearAllPoints()
             row2.left:SetPoint("LEFT", row2, "LEFT", 0, 0)
-            row2.left:SetPoint("RIGHT", row2, "RIGHT", -72, 0)
+            -- Reserve more space for right (gold + Raw g/h) so quality counts don't overlap
+            row2.left:SetPoint("RIGHT", row2, "RIGHT", -165, 0)
 
             local qcText = FormatQualityCounts(run.qualityCounts)
             if qcText == "|cff555555-|r" or qcText == "" then
@@ -2629,18 +2697,25 @@ RefreshStatsUI = function()
             end
 
             row2.left:SetText(qcText)
-            row2.right:SetText(FormatGold(run.goldCopper))
+            local goldText = FormatGold(run.goldCopper)
+            if run.estimatedGPHCopper and run.estimatedGPHCopper > 0 then
+                local gph = run.estimatedGPHCopper
+                local g, s, c = math.floor(gph / 10000), math.floor((gph % 10000) / 100), gph % 100
+                local parts = {}
+                if g > 0 then parts[#parts + 1] = g .. "g" end
+                if s > 0 then parts[#parts + 1] = s .. "s" end
+                if g == 0 and s == 0 then parts[#parts + 1] = c .. "c" end
+                local gphStr = table.concat(parts, " ") .. "/h"
+                goldText = goldText .. " |cff888888(Raw g/h: " .. gphStr .. ")|r"
+            end
+            row2.right:SetText(goldText)
+            row2.runRef = run
 
             row2.highlight:Show()
             row2:EnableMouse(true)
-            local runRef = run
-            row2:SetScript("OnMouseUp", function() ShowItemDetail(runRef) end)
-            row2:SetScript("OnEnter", function(self)
-                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-                GameTooltip:AddLine("Click to view items", 0.7, 0.7, 0.7)
-                GameTooltip:Show()
-            end)
-            row2:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            row2:SetScript("OnMouseUp", StatsRow2_OnMouseUp)
+            row2:SetScript("OnEnter", StatsRow2_OnEnter)
+            row2:SetScript("OnLeave", StatsRow2_OnLeave)
             yOff = yOff + 16
 
             yOff = yOff + 4  -- small gap between runs
@@ -2651,9 +2726,10 @@ RefreshStatsUI = function()
     content:SetHeight(yOff)
 end
 ----------------------------------------------------------------------
--- ---------------------------------------------------------------------------
--- GPH Session Window (pooled rows, item list, Use selected)
--- ---------------------------------------------------------------------------
+-- GPH (Gold Per Hour) window: the inventory/session UI. Actually created
+-- by __FugaziBAGS when both addons are loaded; we define pools and refresh
+-- logic here so the Ledger can show GPH sessions and record them.
+----------------------------------------------------------------------
 local GPH_ROW_POOL, GPH_ROW_POOL_USED = {}, 0
 local GPH_TEXT_POOL, GPH_TEXT_POOL_USED = {}, 0
 local GPH_ITEM_POOL, GPH_ITEM_POOL_USED = {}, 0
@@ -5357,7 +5433,7 @@ local function ToggleGPHFrame()
 end
 -- Do NOT assign _G.ToggleGPHFrame here; __FugaziBAGS owns the global now.
 
---- Create the main Instance Tracker window (lockouts, runs, buttons).
+--- Builds the main tracker window: hourly cap, recent instances list, lockouts by expansion, and buttons (Ledger, GPH, etc.).
 local function CreateMainFrame()
     local backdrop = {
         bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -5577,9 +5653,7 @@ local function CreateMainFrame()
     return f
 end
 
-----------------------------------------------------------------------
--- Refresh main tracker window
-----------------------------------------------------------------------
+--- Redraws the main window: hourly cap text, recent instances rows, and (if not collapsed) lockout list. Uses pooled rows.
 RefreshUI = function()
     if not frame or not frame:IsShown() then return end
     PurgeOld()
@@ -5723,7 +5797,8 @@ RefreshUI = function()
 end
 
 ----------------------------------------------------------------------
--- Periodic update
+-- Periodic update: runs every frame on the main window. Every 1s we refresh
+-- the lockout list and item detail (if open); every 30s we re-query raid info.
 ----------------------------------------------------------------------
 local elapsed_acc, raidinfo_acc = 0, 0
 local function OnUpdate(self, elapsed)
@@ -5761,7 +5836,8 @@ local function TryHookElvUIBankBags()
 end
 
 ----------------------------------------------------------------------
--- Event handling
+-- Event handling: the game tells us when things happen (login, zone change,
+-- bag update, etc.). We react by updating state and refreshing the UI.
 ----------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -5889,7 +5965,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 ----------------------------------------------------------------------
--- Slash commands (/fit and /fit <cmd>)
+-- Slash commands: /fit, /fugazi, /gph. Type /fit help in chat for the full list
+-- (toggle windows, mute, reset hour, stats/Ledger, skin, etc.).
 ----------------------------------------------------------------------
 SLASH_INSTANCETRACKER1 = "/fit"
 SLASH_INSTANCETRACKER2 = "/fugazi"

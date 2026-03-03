@@ -1,4 +1,6 @@
 -- __FugaziBAGS: Scope loads first. Use FugaziBAGSDB; migrate from TestDB once for existing installs.
+_G.TestAddon = _G.TestAddon or {}
+local A = _G.TestAddon
 FugaziBAGSDB = FugaziBAGSDB or {}
 if TestDB and next(TestDB) then
     for k, v in pairs(TestDB) do
@@ -18,9 +20,11 @@ DB.gphDestroyListPerChar = DB.gphDestroyListPerChar or {}
 DB.gphItemTypeCache = DB.gphItemTypeCache or {}
 DB.gphSkin = DB.gphSkin or "original"
 DB.fitSkin = DB.fitSkin or "original"
+if DB.gphForceGridView == nil then DB.gphForceGridView = false end
 
 -- Viewport width for scroll content (must match main file; used by GetGPHRow/GetGPHItemBtn etc.)
 local SCROLL_CONTENT_WIDTH = 296
+local MAX_RUN_HISTORY = 100
 
 --- Realm#Character key for per-char DB.
 local function GetGphCharKey()
@@ -230,9 +234,11 @@ end
 
 local function FinishGphVendorRun()
     gphVendorRunning = false
+    local wasOverride = gphVendorSessionOverride  -- Hold Shift at open = no autosell and no Greedy this session
     gphVendorSessionOverride = false
     gphVendorWorker:Hide()
-    if DB.gphSummonGreedy ~= false then
+    local wantGreedy = _G.FugaziBAGSDB and _G.FugaziBAGSDB.gphSummonGreedy ~= false
+    if not wasOverride and wantGreedy then
         QueueGphSummonGreedy()
     end
 end
@@ -284,17 +290,20 @@ local function StartGphVendorRun()
     if not UnitExists("target") or UnitName("target") ~= GOBLIN_MERCHANT_NAME then return end
     if not MerchantFrame or not MerchantFrame:IsShown() then return end
     if gphVendorRunning then return end
+    -- Capture Shift first: if held at open, no autosell and no Greedy this session (override until vendor closed).
+    local shift = _G.IsShiftKeyDown and _G.IsShiftKeyDown()
+    gphVendorSessionOverride = shift
+    if gphVendorSessionOverride then return end
     gphVendorRunning = true
     BuildGphVendorQueue()
     if #gphVendorQueue == 0 then
         gphVendorRunning = false
-        if UnitExists("target") and UnitName("target") == GOBLIN_MERCHANT_NAME and MerchantFrame and MerchantFrame:IsShown() and (DB.gphSummonGreedy ~= false) then
+        local wantGreedy = _G.FugaziBAGSDB and _G.FugaziBAGSDB.gphSummonGreedy ~= false
+        if UnitExists("target") and UnitName("target") == GOBLIN_MERCHANT_NAME and MerchantFrame and MerchantFrame:IsShown() and wantGreedy then
             QueueGphSummonGreedy()
         end
         return
     end
-    -- Capture Shift once at open: if held, no selling this vendor session until you close and reopen.
-    gphVendorSessionOverride = (IsShiftKeyDown and IsShiftKeyDown())
     gphVendorWorker._t = 0
     gphVendorWorker:Show()
 end
@@ -371,27 +380,19 @@ if not _G.InstanceTrackerGPHToggleButton then
     end)
 end
 
--- Apply key override so bag key triggers our button (hook alone may not run on keypress in 3.3.5).
--- Prefer SecureHandlerClickTemplate button so bag key works in combat; fallback to non-secure button.
 local function ApplyGPHInvKeyOverride(btn)
-    if not btn or not DB.gphInvKeybind then return end
-    local owner = _G.InstanceTrackerKeybindOwner
-    if not owner then return end
-    local btnName = (_G.InstanceTrackerGPHCombatToggleBtn and SecureHandlerSetFrameRef) and "InstanceTrackerGPHCombatToggleBtn" or "InstanceTrackerGPHToggleButton"
-    if ClearOverrideBindings then ClearOverrideBindings(owner) end
-    local keys = {}
-    for _, action in next, { "TOGGLEBACKPACK", "OPENALLBAGS" } do
-        local k = GetBindingKey and GetBindingKey(action)
-        if k and k ~= "" then keys[k] = true end
-    end
-    if next(keys) == nil then keys["B"] = true end
-    for key, _ in pairs(keys) do
-        if SetOverrideBindingClick then
-            SetOverrideBindingClick(owner, true, key, btnName, "LeftButton")
-        elseif SetOverrideBinding then
-            SetOverrideBinding(owner, true, key, "CLICK", btnName)
-        end
-    end
+    -- Override bindings are no longer used: we rely entirely on hooking
+    -- ToggleBackpack/OpenAllBags via GPHInvBagKeyHandler so the default bag
+    -- key (and any rebinds) route through our handler naturally, like ElvUI.
+    -- Keep this function so old call sites don't error, but do nothing here.
+end
+
+--- Return the canonical run history table (Ledger data). Same table for write and read.
+local function GetRunHistory()
+    local SV = _G.FugaziBAGSDB
+    if not SV then _G.FugaziBAGSDB = {}; SV = _G.FugaziBAGSDB end
+    if type(SV.runHistory) ~= "table" then SV.runHistory = {} end
+    return SV.runHistory
 end
 
 --- Save a frame's position to DB (for /reload restore). Stores point, relativePoint, x, y (restore uses UIParent).
@@ -401,16 +402,9 @@ local function SaveFrameLayout(frame, shownKey, pointKey)
     if not frame then return end
     local SV = _G.FugaziBAGSDB
     if not SV then SV = {}; _G.FugaziBAGSDB = SV end
-    if pointKey == "itemDetailPoint" then
-        local left, top = frame:GetLeft(), frame:GetTop()
-        if left and top then
-            SV[pointKey] = { point = "TOPLEFT", relativePoint = "BOTTOMLEFT", x = left, y = top }
-        end
-    else
-        local p, _, rp, x, y = frame:GetPoint(1)
-        if p and rp and x and y then
-            SV[pointKey] = { point = p, relativePoint = rp, x = x, y = y }
-        end
+    local left, top = frame:GetLeft(), frame:GetTop()
+    if left and top then
+        SV[pointKey] = { point = "TOPLEFT", relativePoint = "BOTTOMLEFT", x = left, y = top }
     end
     if shownKey then SV[shownKey] = frame:IsShown() end
     if pointKey == "gphPoint" and frame.GetScale then
@@ -634,10 +628,12 @@ local QUALITY_COLORS = {
     [4] = { r = 0.64, g = 0.21, b = 0.93, hex = "a335ee", label = "Purple" },
     [5] = { r = 1.00, g = 0.50, b = 0.00, hex = "ff8000", label = "Legendary" },
     [6] = { r = 0.90, g = 0.80, b = 0.50, hex = "e6cc80", label = "Artifact" },
+    [7] = { r = 0.00, g = 0.80, b = 1.00, hex = "00ccff", label = "Heirloom" },
 }
--- Rarity sort order: legendary (5) > artifact (6) > epic (4) > blue > green > white > grey
+-- Rarity sort order: legendary (5) > heirloom (7) > artifact (6) > epic (4) > blue > green > white > grey
 local function RaritySortOrder(q)
-    if q == 5 then return 6
+    if q == 5 then return 7
+    elseif q == 7 then return 6
     elseif q == 6 then return 5
     elseif q == 4 then return 4
     else return math.min(q or 0, 3) end
@@ -900,8 +896,10 @@ local function GetScanTooltip()
 end
 
 --- Build map itemId -> {bag, slot} (first slot per item) for GetItemCooldown.
+local _gphIdToSlotTemp = {}
 local function GetItemIdToBagSlot()
-    local out = {}
+    local out = _gphIdToSlotTemp
+    if out then wipe(out) end
     for bag = 0, 4 do
         local n = GetContainerNumSlots and GetContainerNumSlots(bag) or 0
         for slot = 1, n do
@@ -1075,8 +1073,10 @@ local function DeleteGPHItem(itemId, amount)
 end
 
 --- Bag scanning: returns { [itemId] = count } and fills itemLinksCache.
+local _scanCounts = {}
 local function ScanBags()
-    local counts = {}
+    local counts = _scanCounts
+    if counts then wipe(counts) end
     for bag = 0, 4 do
         local numSlots = GetContainerNumSlots(bag)
         for slot = 1, numSlots do
@@ -1101,8 +1101,10 @@ local function SnapshotBags()
 end
 
 --- Build set of item IDs currently equipped (slots 1–19). Used to ignore unequip-as-loot.
+local _equippedIdTemp = {}
 local function GetEquippedItemIds()
-    local ids = {}
+    local ids = _equippedIdTemp
+    if ids then wipe(ids) end
     for slot = 1, 19 do
         local link = GetInventoryItemLink and GetInventoryItemLink("player", slot)
         if link then
@@ -1127,7 +1129,9 @@ local function DiffBags()
             previouslyWornOnly[id] = true
         end
     end
-    lastEquippedItemIds = currentEquipped
+    -- Copy current equipped into last so we keep a snapshot (GetEquippedItemIds reuses its table)
+    wipe(lastEquippedItemIds)
+    for id in pairs(currentEquipped) do lastEquippedItemIds[id] = true end
 
     if not currentRun then return end
     for itemId, curCount in pairs(current) do
@@ -1182,7 +1186,8 @@ local function DiffBagsGPH()
             previouslyWornOnly[id] = true
         end
     end
-    lastEquippedItemIds = currentEquipped
+    wipe(lastEquippedItemIds)
+    for id in pairs(currentEquipped) do lastEquippedItemIds[id] = true end
     for itemId, curCount in pairs(current) do
         local baseCount = gphBagBaseline[itemId] or 0
         local delta = curCount - baseCount
@@ -1208,10 +1213,34 @@ local function DiffBagsGPH()
             end
         end
     end
+    -- Sync session item counts down when items are deleted (auto or manual), so GPH and value exclude removed items.
+    for itemId, data in pairs(gphSession.items or {}) do
+        local cur = current[itemId] or 0
+        local base = gphBagBaseline[itemId] or 0
+        local net = cur - base
+        if net < 0 then net = 0 end
+        data.count = net
+        if net == 0 then
+            gphItemsGained[itemId] = nil
+        else
+            gphItemsGained[itemId] = net
+        end
+    end
+    -- Recompute quality counts from synced session items.
+    for q in pairs(gphSession.qualityCounts or {}) do gphSession.qualityCounts[q] = nil end
+    for _, data in pairs(gphSession.items or {}) do
+        local c = data.count or 0
+        if c > 0 and data.quality then
+            gphSession.qualityCounts[data.quality] = (gphSession.qualityCounts[data.quality] or 0) + c
+        end
+    end
     if gphSession then
-        DB.gphSession = gphSession
-        DB.gphBagBaseline = gphBagBaseline
-        DB.gphItemsGained = gphItemsGained
+        local SV = _G.FugaziBAGSDB
+        if SV then
+            SV.gphSession = gphSession
+            SV.gphBagBaseline = gphBagBaseline
+            SV.gphItemsGained = gphItemsGained
+        end
     end
 end
 
@@ -1223,17 +1252,22 @@ local function StartGPHSession()
         items = {},
         qualityCounts = {},
     }
-    gphBagBaseline = ScanBags()
+    -- Copy scan result: ScanBags() returns _scanCounts, which gets wiped on next ScanBags(); baseline must stay fixed.
+    local scan = ScanBags()
+    gphBagBaseline = {}
+    for id, cnt in pairs(scan) do gphBagBaseline[id] = cnt end
     gphItemsGained = {}
     -- Protect equipped items so they're never counted as session gain
     local protected = GetGphProtectedSet()
     for id in pairs(GetEquippedItemIds()) do
         protected[id] = true
     end
-    -- Save state for persistence
-    DB.gphSession = gphSession
-    DB.gphBagBaseline = gphBagBaseline
-    DB.gphItemsGained = gphItemsGained
+    -- Save state to persisted DB (survives /reload)
+    local SV = _G.FugaziBAGSDB
+    if not SV then SV = {}; _G.FugaziBAGSDB = SV end
+    SV.gphSession = gphSession
+    SV.gphBagBaseline = gphBagBaseline
+    SV.gphItemsGained = gphItemsGained
     _G.gphSession = gphSession  -- main file uses global for button/timer state
     AddonPrint(
         ColorText("[InstanceTracker] ", 0.4, 0.8, 1) .. "GPH session started."
@@ -1243,50 +1277,121 @@ end
 --- End GPH session and optionally add to run history.
 local function StopGPHSession()
     if not gphSession then return end
+    if DiffBagsGPH then DiffBagsGPH() end
 
     local now = time()
     local dur = now - gphSession.startTime
     local gold = GetMoney() - gphSession.startGold
     if gold < 0 then gold = 0 end
 
-    -- Convert items to sorted list (identical to dungeon runs)
+    -- Build item list by diffing current bags vs session baseline here (same logic as IT; no reliance on gphItemsGained).
+    local current = ScanBags()
+    local baseline = gphBagBaseline or {}
     local itemList = {}
-    for _, item in pairs(gphSession.items) do
-        table.insert(itemList, {
-            link = item.link,
-            quality = item.quality,
-            count = item.count,
-            name = item.name,
-        })
+    local qualityCounts = {}
+    local protected = GetGphProtectedSet()
+    for itemId, curCount in pairs(current) do
+        local baseCount = baseline[itemId] or 0
+        local delta = curCount - baseCount
+        if delta > 0 and itemId ~= 6948 and not protected[itemId] then
+            local link = itemLinksCache[itemId]
+            if link then
+                local name, _, quality = GetItemInfo(link)
+                quality = quality or 0
+                name = name or "Unknown"
+                table.insert(itemList, {
+                    link = link,
+                    quality = quality,
+                    count = delta,
+                    name = name,
+                })
+                qualityCounts[quality] = (qualityCounts[quality] or 0) + delta
+            end
+        end
     end
     table.sort(itemList, function(a, b)
         if a.quality ~= b.quality then return a.quality > b.quality end
         return a.name < b.name
     end)
 
-    AddonPrint(
-        ColorText("[_FugaziBAGS] ", 0.4, 0.8, 1)
-        .. "GPH session stopped: " .. FormatTimeMedium(dur)
-        .. " | " .. FormatGoldPlain(gold)
-    )
+    -- Record only via __FugaziInstanceTracker (InstanceTrackerDB.runHistory). When IT is disabled, nothing is saved.
+    local RecordToIT = _G.FugaziInstanceTracker_RecordGPHRun
+    if type(RecordToIT) == "function" then
+        local estimatedValueCopper = gold
+        if Addon and Addon.ComputeGPHEstimatedValue and itemList then
+            estimatedValueCopper = gold + (Addon.ComputeGPHEstimatedValue(itemList) or 0)
+        end
+        -- Ledger shows raw gold per hour (gold only), labeled "Raw g/h", so it's clear it's not total value.
+        local rawGPHCopper = nil
+        if dur and dur > 0 then
+            rawGPHCopper = math.floor(gold / (dur / 3600))
+        end
+        RecordToIT(gphSession.startTime, now, gphSession.startGold, gold, itemList, qualityCounts, estimatedValueCopper, rawGPHCopper)
+        AddonPrint(
+            ColorText("[InstanceTracker] ", 0.4, 0.8, 1)
+            .. "GPH session stopped. " .. ColorText("Saved to Ledger", 0.6, 1, 0.6)
+        )
+    else
+        AddonPrint(
+            ColorText("[InstanceTracker] ", 0.4, 0.8, 1)
+            .. "GPH session stopped. (Instance Tracker disabled — run not saved to Ledger.)"
+        )
+    end
 
     gphSession = nil
-    DB.gphSession = nil
-    DB.gphBagBaseline = nil
-    DB.gphItemsGained = nil
-    _G.gphSession = nil  -- main file uses global for button/timer state
+    _G.gphSession = nil
+    local SV = _G.FugaziBAGSDB
+    if SV then
+        SV.gphSession = nil
+        SV.gphBagBaseline = nil
+        SV.gphItemsGained = nil
+    end
+
+    -- Refresh Ledger so new run appears (same frame Ledger uses).
+    -- Our stats frame reads GetRunHistory() (FugaziBAGSDB.runHistory); Instance Tracker's Ledger reads InstanceTrackerDB.runHistory.
+    statsFrame = _G.InstanceTrackerStatsFrame
+    if type(RefreshStatsUI) == "function" then
+        if statsFrame and statsFrame:IsShown() then
+            RefreshStatsUI()
+        end
+    end
+    -- Hide timer in inventory
+    if type(_G.RefreshGPHUI) == "function" then
+        _G.RefreshGPHUI()
+    end
 end
 
---- Restore GPH session from TestDB (e.g. after /reload). Keeps scope and global in sync so button/timer work.
+--- Reset GPH session without saving to Ledger. Clears session and refreshes UI (for popup / menu).
+function ResetGPHSession()
+    gphSession = nil
+    gphBagBaseline = {}
+    gphItemsGained = {}
+    _G.gphSession = nil
+    local SV = _G.FugaziBAGSDB
+    if SV then
+        SV.gphSession = nil
+        SV.gphBagBaseline = nil
+        SV.gphItemsGained = nil
+    end
+    AddonPrint(
+        ColorText("[InstanceTracker] ", 0.4, 0.8, 1) .. "GPH session reset (not saved to Ledger)."
+    )
+    local gf = _G.TestGPHFrame or _G.FugaziBAGS_GPHFrame or gphFrame
+    if gf and type(gf.updateToggle) == "function" then gf.updateToggle() end
+    if type(_G.RefreshGPHUI) == "function" then _G.RefreshGPHUI() end
+end
+
+--- Restore GPH session from persisted DB (e.g. after /reload). Keeps scope and global in sync so button/timer work.
 local function SyncGPHSessionFromDB()
-    if not DB.gphSession then
+    local SV = _G.FugaziBAGSDB
+    if not SV or not SV.gphSession then
         gphSession = nil
         _G.gphSession = nil
         return
     end
-    gphSession = DB.gphSession
-    gphBagBaseline = DB.gphBagBaseline or {}
-    gphItemsGained = DB.gphItemsGained or {}
+    gphSession = SV.gphSession
+    gphBagBaseline = SV.gphBagBaseline or {}
+    gphItemsGained = SV.gphItemsGained or {}
     _G.gphSession = gphSession
 end
 
@@ -1297,8 +1402,9 @@ end
 -- restore the most recent run for that zone from history so the session continues.
 -- Only restores if the run ended within MAX_RESTORE_AGE_SECONDS (5 min); after that or if instance reset, start fresh.
 local function RestoreRunFromHistory(zoneName)
-    local history = DB.runHistory
-    if not history or #history == 0 or not zoneName or zoneName == "" then return false end
+    if not zoneName or zoneName == "" then return false end
+    local history = GetRunHistory()
+    if #history == 0 then return false end
     local now = time()
     for i = 1, #history do
         local run = history[i]
@@ -1417,10 +1523,10 @@ local function FinalizeRun()
         items = itemList,
     }
 
-    if not DB.runHistory then DB.runHistory = {} end
-    table.insert(DB.runHistory, 1, run)
-    while #DB.runHistory > MAX_RUN_HISTORY do
-        table.remove(DB.runHistory)
+    local history = GetRunHistory()
+    table.insert(history, 1, run)
+    while #history > MAX_RUN_HISTORY do
+        table.remove(history)
     end
 
     AddonPrint(
@@ -1477,29 +1583,33 @@ local RefreshItemDetailLive
 ----------------------------------------------------------------------
 -- Helpers: build run snapshots for ShowItemDetail (must be before first use)
 ----------------------------------------------------------------------
+local _snapshotPool = {} -- File-scoped pool for snapshots
+
 local function BuildCurrentRunSnapshot()
-    if not currentRun then return nil end
-    local itemList = {}
-    for _, item in pairs(currentRun.items) do
-        table.insert(itemList, {
-            link = item.link, quality = item.quality,
-            count = item.count, name = item.name,
-        })
+    local run = currentRun
+    if not run then return nil end
+    local itemList = Addon.GetRecycledAggTable() -- Reuse agg pool for snapshot items
+    wipe(itemList)
+    for _, item in pairs(run.items) do
+        local itm = Addon.GetRecycledItemTable()
+        itm.link = item.link
+        itm.quality = item.quality
+        itm.count = item.count
+        itm.name = item.name
+        table.insert(itemList, itm)
     end
     table.sort(itemList, function(a, b)
-        if a.quality ~= b.quality then return a.quality > b.quality end
-        return a.name < b.name
+        if (a and a.quality) ~= (b and b.quality) then return (a.quality or 0) > (b.quality or 0) end
+        return (a.name or "") < (b.name or "")
     end)
-    return {
-        name = currentRun.name,
-        qualityCounts = currentRun.qualityCounts,
-        items = itemList,
-    }
+    wipe(_snapshotPool)
+    _snapshotPool.name = run.name
+    _snapshotPool.qualityCounts = run.qualityCounts
+    _snapshotPool.items = itemList
+    return _snapshotPool
 end
 
 local function BuildGPHSnapshot()
-    if not gphSession then return nil end
-    local itemList = {}
     for _, item in pairs(gphSession.items) do
         table.insert(itemList, {
             link = item.link, quality = item.quality,
@@ -2017,7 +2127,7 @@ local function CreateItemDetailFrame()
         local titleText = run.name or "Unknown"
         if self.searchText and self.searchText ~= "" then
             local searchLower = self.searchText:lower()
-            local history = DB.runHistory or {}
+            local history = GetRunHistory()
             for _, r in ipairs(history) do
                 local runNameLower = r.name and r.name:lower() or ""
                 local customLower = r.customName and r.customName:lower() or ""
@@ -2207,7 +2317,7 @@ end
 -- Remove a single run from history
 ----------------------------------------------------------------------
 RemoveRunEntry = function(index)
-    local history = DB.runHistory or {}
+    local history = GetRunHistory()
     if index >= 1 and index <= #history then
         table.remove(history, index)
         AddonPrint(
@@ -2280,7 +2390,8 @@ StaticPopupDialogs["INSTANCETRACKER_CLEAR_HISTORY"] = {
     button1 = "Yes, Clear",
     button2 = "Cancel",
     OnAccept = function()
-        DB.runHistory = {}
+        local h = GetRunHistory()
+        while #h > 0 do table.remove(h) end
         AddonPrint(
             ColorText("[InstanceTracker] ", 0.4, 0.8, 1) .. "Run history cleared."
         )
@@ -2371,19 +2482,65 @@ StaticPopupDialogs["GPH_DELETE_QUALITY"] = {
         end
         if data and data.quality then
             gphPendingQuality[data.quality] = nil
+            if A.gphRarityDelStage then A.gphRarityDelStage[data.quality] = nil end
         end
         if _G.RefreshGPHUI then _G.RefreshGPHUI() end
     end,
     OnCancel = function(self, data)
         if data and data.quality then
             gphPendingQuality[data.quality] = nil
+            if A.gphRarityDelStage then A.gphRarityDelStage[data.quality] = nil end
         end
         if _G.RefreshGPHUI then _G.RefreshGPHUI() end
     end,
     timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
+    whileDead = 1,
+    hideOnEscape = 1,
+}
+
+StaticPopupDialogs["GPH_CONTINUOUS_DELETE"] = {
+    text = "Enable continuous deletion of unprotected %s items?\nThis will automatically destroy matching items every 0.5s while active.",
+    button1 = "Enable",
+    button2 = "Cancel",
+    OnAccept = function(self, data)
+        if data and data.quality then
+            local Addon = _G.TestAddon
+            if Addon and Addon.StartContinuousDelete then
+                Addon.StartContinuousDelete(data.quality)
+            end
+        end
+    end,
+    timeout = 0,
+    whileDead = 1,
+    hideOnEscape = 1,
+}
+
+StaticPopupDialogs["GPH_CONFIRM_MAIL_RARITY"] = {
+    text = "Are you sure you want to mail all unprotected %s items to %s?",
+    button1 = "Accept",
+    button2 = "Cancel",
+    OnAccept = function(self, data)
+        if _G.TestAddon and _G.TestAddon.StartSendRarityMail then
+            _G.TestAddon.StartSendRarityMail(data.rarity)
+        end
+    end,
+    timeout = 0,
+    whileDead = 1,
+    hideOnEscape = 1,
+}
+
+StaticPopupDialogs["GPH_CONFIRM_MAIL_ALL"] = {
+    text = "Are you sure you want to mail ALL unprotected items to %s?\n\n(Skips Hearthstone, Quest items, and Protected gear)",
+    button1 = "Accept",
+    button2 = "Cancel",
+    OnAccept = function(self, data)
+        if _G.TestAddon and _G.TestAddon.StartSendRarityMail then
+            _G.TestAddon.StartSendRarityMail(-1)
+        end
+    end,
+    timeout = 0,
+    whileDead = 1,
+    hideOnEscape = 1,
 }
 
 ----------------------------------------------------------------------
@@ -2567,6 +2724,7 @@ end
 -- Refresh stats window
 ----------------------------------------------------------------------
 RefreshStatsUI = function()
+    statsFrame = statsFrame or _G.InstanceTrackerStatsFrame
     if not statsFrame or not statsFrame:IsShown() then return end
     ResetStatsPools()
 
@@ -2637,8 +2795,8 @@ RefreshStatsUI = function()
         return
     end
 
-    -- Run history
-    local history = DB.runHistory or {}
+    -- Run history: same table StopGPHSession writes to (GetRunHistory)
+    local history = GetRunHistory()
     local hdr2 = GetStatsText(content)
     hdr2:SetPoint("TOPLEFT", content, "TOPLEFT", 4, -yOff)
     hdr2:SetText("|cff80c0ff--- History (" .. #history .. "/" .. MAX_RUN_HISTORY .. ") ---|r")
@@ -2740,11 +2898,47 @@ local function ResetGPHPools()
     GPH_ITEM_POOL_USED = 0
 end
 
+local _gphAggregatedPool = {}
+local _gphAggregatedPoolUsed = 0
+local function GetRecycledAggTable()
+    _gphAggregatedPoolUsed = _gphAggregatedPoolUsed + 1
+    local t = _gphAggregatedPool[_gphAggregatedPoolUsed]
+    if not t then t = {}; _gphAggregatedPool[_gphAggregatedPoolUsed] = t end
+    wipe(t)
+    return t
+end
+
+local _gphItemListPool = {}
+local _gphItemListPoolUsed = 0
+local function GetRecycledItemTable()
+    _gphItemListPoolUsed = _gphItemListPoolUsed + 1
+    local t = _gphItemListPool[_gphItemListPoolUsed]
+    if not t then t = {}; _gphItemListPool[_gphItemListPoolUsed] = t end
+    wipe(t)
+    return t
+end
+
+local function ResetGPHDataPools()
+    _gphAggregatedPoolUsed = 0
+    _gphItemListPoolUsed = 0
+    if A._gphNormalPool then wipe(A._gphNormalPool) end
+    if A._gphDestroyedPool then wipe(A._gphDestroyedPool) end
+    if A._gphDrawListPool then wipe(A._gphDrawListPool) end
+    if A._gphFlatPool then wipe(A._gphFlatPool) end
+end
+
+A._gphNormalPool = {}
+A._gphDestroyedPool = {}
+A._gphDrawListPool = {}
+A._gphFlatPool = {}
+A._gphCategoryGroupsPool = {}
+
 local function GetGPHRow(parent, withDelete)
     GPH_ROW_POOL_USED = GPH_ROW_POOL_USED + 1
     local row = GPH_ROW_POOL[GPH_ROW_POOL_USED]
     if not row then
         row = CreateFrame("Frame", nil, parent)
+        GPH_ROW_POOL[GPH_ROW_POOL_USED] = row
         row:SetWidth(SCROLL_CONTENT_WIDTH)
         row:SetHeight(16)
 
@@ -2825,8 +3019,16 @@ local function GetGPHItemBtn(parent)
     local btn = GPH_ITEM_POOL[GPH_ITEM_POOL_USED]
     if not btn then
         btn = CreateFrame("Frame", nil, parent)
+        GPH_ITEM_POOL[GPH_ITEM_POOL_USED] = btn
         btn:SetWidth(SCROLL_CONTENT_WIDTH)
         btn:SetHeight(18)
+        btn:EnableMouse(true)
+        btn:SetScript("OnEnter", function(self) if self.deleteBtn then self.deleteBtn:Show() end end)
+        btn:SetScript("OnLeave", function(self)
+            if not self:IsMouseOver() and self.deleteBtn then
+                self.deleteBtn:Hide()
+            end
+        end)
 
         -- Delete button
         local delBtn = CreateFrame("Button", nil, btn)
@@ -2865,20 +3067,19 @@ local function GetGPHItemBtn(parent)
         icon:SetHeight(16)
         icon:SetPoint("LEFT", clickArea, "LEFT", 0, 0)
         btn.icon = icon
-        local nameFs = clickArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        nameFs:SetPoint("LEFT", icon, "RIGHT", 4, 0)
-        nameFs:SetPoint("RIGHT", clickArea, "RIGHT", -2, 0)
-        nameFs:SetJustifyH("LEFT")
-        btn.nameFs = nameFs
         local countFs = clickArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         countFs:SetPoint("RIGHT", clickArea, "RIGHT", -2, 0)
         countFs:SetJustifyH("RIGHT")
         btn.countFs = countFs
+        local nameFs = clickArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        nameFs:SetPoint("LEFT", icon, "RIGHT", 4, 0)
+        nameFs:SetPoint("RIGHT", clickArea, "RIGHT", -40, 0)
+        nameFs:SetJustifyH("LEFT")
+        btn.nameFs = nameFs
         local hl = clickArea:CreateTexture(nil, "HIGHLIGHT")
         hl:SetAllPoints()
         hl:SetTexture("Interface\\Tooltips\\UI-Tooltip-Background")
         hl:SetVertexColor(1, 1, 1, 0.1)
-        -- Dark overlay for items with "Cooldown remaining:" (created last so it draws ON TOP of icon/text) — 3.3.5: path + SetVertexColor
         local cooldownOverlay = clickArea:CreateTexture(nil, "OVERLAY")
         cooldownOverlay:SetAllPoints()
         cooldownOverlay:SetTexture("Interface\\Tooltips\\UI-Tooltip-Background")
@@ -2901,6 +3102,13 @@ local function GetGPHItemBtn(parent)
         protectedOverlay:SetAlpha(0.85)
         protectedOverlay:Hide()
         btn.protectedOverlay = protectedOverlay
+        -- Key icon overlay for protected items: subtle (0.1, desat) normally; at vendor 0.5 full color.
+        local protectedKeyIcon = clickArea:CreateTexture(nil, "OVERLAY")
+        protectedKeyIcon:SetSize(14, 14)
+        protectedKeyIcon:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 0, 0)
+        protectedKeyIcon:SetTexture("Interface\\Icons\\INV_Misc_Key_13")
+        protectedKeyIcon:Hide()
+        btn.protectedKeyIcon = protectedKeyIcon
         -- Previously worn indicator (shield) only
         local prevWornIcon = clickArea:CreateTexture(nil, "OVERLAY")
         prevWornIcon:SetWidth(14)
@@ -2908,6 +3116,14 @@ local function GetGPHItemBtn(parent)
         prevWornIcon:SetPoint("LEFT", icon, "RIGHT", 4, 0)
         prevWornIcon:Hide()
         btn.prevWornIcon = prevWornIcon
+
+        local pulse = clickArea:CreateTexture(nil, "OVERLAY", nil, 7)
+        pulse:SetAllPoints()
+        pulse:SetTexture("Interface\\Tooltips\\UI-Tooltip-Background")
+        pulse:SetVertexColor(1, 1, 1, 0.45)
+        pulse:Hide()
+        btn.pulseTex = pulse
+
         GPH_ITEM_POOL[GPH_ITEM_POOL_USED] = btn
     end
     btn:SetParent(parent)
@@ -2916,9 +3132,11 @@ local function GetGPHItemBtn(parent)
     btn.clickArea:Show()
     btn.clickArea:EnableMouse(true)
     btn.itemLink = nil
+    if btn.pulseTex then btn.pulseTex:Hide() end
     if btn.cooldownOverlay then btn.cooldownOverlay:Hide() end
     if btn.destroyOverlay then btn.destroyOverlay:Hide() end
     if btn.protectedOverlay then btn.protectedOverlay:Hide() end
+    if btn.protectedKeyIcon then btn.protectedKeyIcon:Hide() end
     if btn.prevWornIcon then btn.prevWornIcon:Hide() end
     return btn
 end
@@ -2929,17 +3147,36 @@ local GPH_SPELL_IDS = { Disenchant = 13262, Prospecting = 31252 }
 --- True if the player has a spell whose name contains spellName (e.g. "Disenchant" matches "Disenchant (Rank 1)").
 local function IsSpellKnownByName(spellName)
     if not spellName or spellName == "" then return false end
+    
+    -- Localized name if possible
+    local localizedName = spellName
     local sid = GPH_SPELL_IDS[spellName]
-    if sid and IsSpellKnown and IsSpellKnown(sid) then return true end
+    if sid and GetSpellInfo then
+        local n = GetSpellInfo(sid)
+        if n then localizedName = n end
+    end
+
     local bookType = BOOKTYPE_SPELL or "spell"
-    local n = (GetNumSpellBookItems and GetNumSpellBookItems(bookType)) or (GetNumSpellBookItems and GetNumSpellBookItems()) or 0
-    if n <= 0 then n = 300 end
-    for i = 1, math.min(n, 300) do
-        local name = (GetSpellBookItemName and GetSpellBookItemName(i, bookType)) or (GetSpellBookItemName and GetSpellBookItemName(i, "spell")) or (GetSpellBookItemName and GetSpellBookItemName(i))
-        if name and name:find(spellName, 1, true) then return true end
+    local getNumTabs = GetNumSpellTabs or function() return 0 end
+    local getTabInfo = GetSpellTabInfo or function() return nil, nil, 0, 0 end
+    local getSpellName = GetSpellBookItemName or GetSpellName
+
+    if not getSpellName then return false end
+
+    local numTabs = getNumTabs()
+    for i = 1, numTabs do
+        local _, _, offset, numSpells = getTabInfo(i)
+        if offset and numSpells then
+            for j = 1, numSpells do
+                local name = getSpellName(offset + j, bookType)
+                if name and (name == localizedName or name:find(localizedName, 1, true)) then return true end
+            end
+        end
     end
     return false
 end
+
+
 
 --- Returns spell name (Disenchant/Prospecting) if bag/slot is destroyable, else nil.
 --- DE: Armor/Weapon quality 2-4; Prospect: tooltip ITEM_PROSPECTABLE’s
@@ -3311,28 +3548,12 @@ StaticPopupDialogs["INSTANCETRACKER_GPH_UNMARK_PROTECTED"] = {
 }
 
 StaticPopupDialogs["INSTANCETRACKER_RESET_GPH"] = {
-    text = "Are you sure you want to reset the GPH session?\nThis will clear all data and restart the timer.",
+    text = "Reset this session? Current data will be discarded and nothing will be saved to the Ledger. You can start a new session afterward.",
     button1 = "Yes, Reset",
     button2 = "Cancel",
     OnAccept = function()
-        if gphSession then
-            -- Reset clears everything and stops the session (button returns to "Start")
-            gphSession = nil
-            gphBagBaseline = {}
-            gphItemsGained = {}
-            _G.gphSession = nil  -- main file uses global for button/timer state
-            AddonPrint(
-                ColorText("[InstanceTracker] ", 0.4, 0.8, 1) .. "GPH session reset."
-            )
-            -- Save state (nil session)
-            DB.gphSession = nil
-            DB.gphBagBaseline = nil
-            DB.gphItemsGained = nil
-            -- Update toggle button (scope's gphFrame may be nil; main sets TestGPHFrame)
-            local gf = _G.TestGPHFrame or gphFrame
-            if gf and gf.updateToggle then gf.updateToggle() end
-            -- Always refresh so timer/gold/GPH hide (main reads _G.gphSession in RefreshGPHUI)
-            if _G.RefreshGPHUI then _G.RefreshGPHUI() end
+        if _G.TestAddon and type(_G.TestAddon.ResetGPHSession) == "function" then
+            _G.TestAddon.ResetGPHSession()
         end
     end,
     timeout = 0,
@@ -3631,9 +3852,7 @@ local function ShowGPHStackSplit(bag, slot, maxCount, anchorTo, itemId, fromBank
 end
 
 
--- Export scope to _G.TestAddon for main file
-_G.TestAddon = _G.TestAddon or {}
-local A = _G.TestAddon
+-- Export scope for main file
 A.GetGphCharKey = GetGphCharKey
 A.GetGphProtectedSet = GetGphProtectedSet
 A.GetGphPreviouslyWornOnlySet = GetGphPreviouslyWornOnlySet
@@ -3696,6 +3915,8 @@ A.DiffBags = DiffBags
 A.DiffBagsGPH = DiffBagsGPH
 A.StartGPHSession = StartGPHSession
 A.StopGPHSession = StopGPHSession
+A.ResetGPHSession = ResetGPHSession
+_G.ResetGPHSession = ResetGPHSession  -- so popup or any caller can find it
 A.SyncGPHSessionFromDB = SyncGPHSessionFromDB
 A.RestoreRunFromHistory = RestoreRunFromHistory
 A.StartRun = StartRun
@@ -3715,6 +3936,9 @@ A.GetItemBtn = GetItemBtn
 A.CreateItemDetailFrame = CreateItemDetailFrame
 A.CreateStatsFrame = CreateStatsFrame
 A.ResetGPHPools = ResetGPHPools
+A.ResetGPHDataPools = ResetGPHDataPools
+A.GetRecycledAggTable = GetRecycledAggTable
+A.GetRecycledItemTable = GetRecycledItemTable
 A.GetGPHRow = GetGPHRow
 A.GetGPHText = GetGPHText
 A.GetGPHItemBtn = GetGPHItemBtn
