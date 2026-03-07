@@ -4,7 +4,7 @@
 
 Two optional addons for **World of Warcraft 3.3.5a** (WotLK) that work independantly or together. They add a single inventory window, a custom bank, Dungeon and Loot Tracking and shared skins. You can use one, both, or neither; they work independently or together.
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue)
+![Version](https://img.shields.io/badge/version-2.0.1-blue)
 ![Interface](https://img.shields.io/badge/interface-3.3.5a-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
