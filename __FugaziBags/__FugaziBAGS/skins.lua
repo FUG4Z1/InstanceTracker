@@ -110,6 +110,36 @@ local SKIN = {
         sepColor = { 0.70, 0.50, 0.90, 0.5 },
         bagSpaceGlow = { 0.85, 0.50, 0.95, 0.6 },
     },
+    -- "FUGAZI" skin: based on elvui_real plus your current overrides from gphSkinOverrides.
+    fugazi = {
+        mainBackdrop = {
+            bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            tile     = true, tileSize = 16, edgeSize = 1,
+            insets   = { left = 0, right = 0, top = 0, bottom = 0 },
+        },
+        -- From your gphSkinOverrides.mainBg
+        mainBg = { 0.1333, 0.0510, 0.0039, 0.98 },
+        mainBorder = { 0.10, 0.10, 0.10, 1 },
+        -- Header: washed, scruffy look – custom Leopard texture tinted dark so it’s unique, not flat ElvUI
+        titleBackdrop = { bgFile = "Interface\\AddOns\\__FugaziBAGS\\media\\Suede", edgeFile = nil, tile = true, tileSize = 128, edgeSize = 0, insets = { left = 0, right = 0, top = 0, bottom = 0 } },
+        titleBg = { 0.14, 0.11, 0.09, 0.88 },
+        btnNormal = { 0.18, 0.18, 0.18, 0.9 },
+        -- Use your warm header text colour from gphSkinOverrides.headerTextColor
+        titleTextColor = { 1.0, 0.81, 0.58, 1 },
+        searchBtnBg = { 0.18, 0.18, 0.18, 0.9 },
+        searchBtnHover = { 0.26, 0.26, 0.26, 0.95 },
+        scaleBtnDim = { 0.18, 0.18, 0.18, 0.9 },
+        scaleBtnBright = { 0.30, 0.30, 0.30, 0.95 },
+        collapseBtnDim = { 0.18, 0.18, 0.18, 0.9 },
+        collapseBtnBright = { 0.30, 0.30, 0.30, 0.95 },
+        statusTextColor = { 1.0, 0.81, 0.58, 1 },
+        bottomBarBg = { 0.03, 0.03, 0.03, 0.98 },
+        bottomBarBorder = { 0.10, 0.10, 0.10, 1 },
+        bottomBarTextColor = { 1.0, 0.81, 0.58, 1 },
+        sepColor = { 0.25, 0.25, 0.25, 0.5 },
+        bagSpaceGlow = { 0.5, 0.5, 0.5, 0.5 },
+    },
 }
 
 local GPH_CLASS_COLORS = {
@@ -149,6 +179,7 @@ end
 local function ResolveSkinName()
     local SV = _G.FugaziBAGSDB
     local val = SV and SV.gphSkin or "original"
+    if val == "fugazi" then return "fugazi" end
     if val == "elvui_real" then return "elvui_real" end
     if val == "elvui" then return "elvui" end
     if val == "pimp_purple" then return "pimp_purple" end
@@ -301,6 +332,7 @@ local function ApplyGPHFrameSkin(f)
     if titleBar then
         titleBar:SetBackdrop(s.titleBackdrop)
         titleBar:SetBackdropColor(unpack(s.titleBg))
+        if titleBar._fugaziEpicOverlay then titleBar._fugaziEpicOverlay:Hide() end
     end
     if f.gphTitle then
         ApplyGphInventoryTitle(f.gphTitle)
@@ -399,17 +431,16 @@ local function ApplyGPHFrameSkin(f)
     f._originalEdgeFile = (mb and mb.edgeFile) and mb.edgeFile or nil
     f._originalEdgeSize = (mb and mb.edgeSize) and math.min(12, mb.edgeSize) or 8
     if f.gphBottomBar then
-        if skinName ~= "pimp_purple" then
-            if f._pimpBottomLeopard then
-                f._pimpBottomLeopard:Hide()
-            end
-            if s.bottomBarBg then
-                f.gphBottomBar:SetBackdropColor(unpack(s.bottomBarBg))
-            end
-            if s.bottomBarBorder then
-                f.gphBottomBar:SetBackdropBorderColor(unpack(s.bottomBarBorder))
-            end
-        else
+        -- Default bottom bar backdrop (restored when not fugazi/pimp_purple)
+        local defaultBottomBackdrop = {
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+            tile = true, tileSize = 16, edgeSize = 8,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        }
+        if skinName == "pimp_purple" then
+            if f._fugaziBottomLeopard then f._fugaziBottomLeopard:Hide() end
+            f.gphBottomBar:SetBackdrop(defaultBottomBackdrop)
             if s.bottomBarBg then
                 f.gphBottomBar:SetBackdropColor(unpack(s.bottomBarBg))
             end
@@ -427,6 +458,26 @@ local function ApplyGPHFrameSkin(f)
             else
                 f._pimpBottomLeopard:SetTexCoord(0, 1, 0.0, 20.0 / 256.0)
                 f._pimpBottomLeopard:Show()
+            end
+        elseif skinName == "fugazi" then
+            if f._pimpBottomLeopard then f._pimpBottomLeopard:Hide() end
+            -- Same textured backdrop as header (Suede strip) so bottom bar matches top bar
+            f.gphBottomBar:SetBackdrop(s.titleBackdrop)
+            f.gphBottomBar:SetBackdropColor(unpack(s.titleBg))
+            if s.bottomBarBorder then
+                f.gphBottomBar:SetBackdropBorderColor(unpack(s.bottomBarBorder))
+            end
+            if f.gphBottomBar._fugaziEpicOverlay then f.gphBottomBar._fugaziEpicOverlay:Hide() end
+        else
+            if f._pimpBottomLeopard then f._pimpBottomLeopard:Hide() end
+            if f._fugaziBottomLeopard then f._fugaziBottomLeopard:Hide() end
+            if f.gphBottomBar._fugaziEpicOverlay then f.gphBottomBar._fugaziEpicOverlay:Hide() end
+            f.gphBottomBar:SetBackdrop(defaultBottomBackdrop)
+            if s.bottomBarBg then
+                f.gphBottomBar:SetBackdropColor(unpack(s.bottomBarBg))
+            end
+            if s.bottomBarBorder then
+                f.gphBottomBar:SetBackdropBorderColor(unpack(s.bottomBarBorder))
             end
         end
     end
@@ -597,6 +648,37 @@ local function SkinScrollBar(self)
     end
 end
 
+--- Full "FUGAZI" preset: when a user selects the FUGAZI skin, apply these DB options so they get
+--- the same look — fonts, font sizes, icon size, hide options, frame opacity, and all colors.
+function ApplyFugaziPreset()
+    local SV = _G.FugaziBAGSDB
+    if not SV then return end
+    SV.gphSkin = "fugazi"
+    -- Frame opacity
+    SV.gphFrameAlpha = 1
+    -- Header / category: font, size, enable customisation
+    SV.gphCategoryHeaderFontCustom = true
+    SV.gphCategoryHeaderFont = "Interface\\AddOns\\__FugaziBAGS\\media\\Fonts\\AncientModernTales.ttf"
+    SV.gphCategoryHeaderFontSize = 12
+    -- Row / item details: font (Eight Bit Dragon), font size 15, icon size, opacity 100%, enable customisation
+    SV.gphItemDetailsCustom = true
+    SV.gphItemDetailsFont = "Interface\\AddOns\\__FugaziBAGS\\media\\Fonts\\EightBitDragon.ttf"
+    SV.gphItemDetailsFontSize = 15
+    SV.gphItemDetailsIconSize = 14
+    SV.gphItemDetailsAlpha = 1
+    -- Visibility
+    SV.gphHideIconsInList = true
+    SV.gphHideTopButtons = true
+    SV.gphBankHideTopButtons = true
+    -- Colors (header text, FIT row label, item icon tint, frame background)
+    SV.gphSkinOverrides = {
+        fitRowColor = { 1, 0.945, 0.89, 1 },
+        headerTextColor = { 1, 0.808, 0.584, 1 },
+        itemDetailsIconColor = { 0.965, 1, 0.953 },
+        mainBg = { 0.133, 0.051, 0.004, 0.98 },
+    }
+end
+
 -- Expose for FugaziBAGS.lua (AddBorder for Search/bag; AddRarityBorder for original-skin rarity buttons)
 _G.__FugaziBAGS_Skins = {
     SKIN = SKIN,
@@ -606,5 +688,7 @@ _G.__FugaziBAGS_Skins = {
     SkinScrollBar = SkinScrollBar,
     AddBorder = AddBorder,
     AddRarityBorder = AddRarityBorder,
+    ApplyFugaziPreset = ApplyFugaziPreset,
 }
+_G.ApplyFugaziPreset = ApplyFugaziPreset
 

@@ -71,9 +71,10 @@ local FIT_SKIN = {
 }
 
 local function ResolveFitSkinName()
-    -- Prefer FIT addon's saved setting so the FIT options panel works when this frame was created by BAGS.
-    local val = (_G.InstanceTrackerDB and _G.InstanceTrackerDB.fitSkin)
+    -- Share skin with FugaziBAGS when available; fall back to original when standalone.
+    local val = (_G.FugaziBAGSDB and _G.FugaziBAGSDB.gphSkin)
         or (_G.FugaziBAGSDB and _G.FugaziBAGSDB.fitSkin)
+        or (_G.InstanceTrackerDB and _G.InstanceTrackerDB.fitSkin)
         or "original"
     if val == "elvui_real" then return "elvui_real" end
     if val == "elvui" then return "elvui" end

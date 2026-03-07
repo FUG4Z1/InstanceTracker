@@ -1,34 +1,38 @@
-----------------------------------------------------------------------
--- __FugaziBAGS: Combat Grid (separate file)
-----------------------------------------------------------------------
---
--- WHY THIS FILE EXISTS
--- The addon started as Fugazi Instance Tracker with a manageable loot list. That list
--- slowly grew into a full inventory (the "list view" in FugaziBAGS.lua). The problem:
--- that list view was never safe to use in combat — WoW's taint system blocked things left right and cente
--- like right-click-to-use and keybinds, so you couldn't use potions or open bags in a fight.
--- Instead of rewriting the whole addon, this file was added as a separate, "combat-safe"
--- layer: when you're in combat (or when you force grid mode), the addon switches to a
--- grid of real bag slots that use Blizzard's secure templates. So you get:
---   • Out of combat / city: list view (sort, filter, GPH timer, etc.)
---   • In combat (or "force grid" on): this grid — like the default WoW bags, but inside
---     our window, so you can use items and open/close with B without taint errors.
--- It all works now, and grid mode is kept in this file so the main addon stays one place
--- for list logic and this file stays one place for secure grid logic.
---
--- WHAT THIS FILE DOES
--- • Provides the grid of bag slots (backpack + bags 1–4 + keyring) that you see in "grid mode".
--- • Uses Blizzard's ContainerFrameItemButtonTemplate so clicks (use item, drag, etc.) run
---   in a secure path and work in combat.
--- • ShowInFrame(f) / HideInFrame(f): show or hide this grid inside the inventory window,
---   and switch the main addon back to list view when you leave combat (unless "force grid" is on).
--- • Same idea for the bank: ShowInBankFrame / HideInBankFrame for grid mode in the bank window.
--- • Search and rarity filter apply to the grid (dim non-matching slots).
--- • Alt+click = protect/unprotect; Ctrl+right-double-click = add to autodelete list (with confirm).
---
-----------------------------------------------------------------------
 
--- Cached WoW API (faster than _G every time)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--[[
+  FugaziBAGS_CombatGrid: bag grid view (works in combat). Slot grid + bag bar for inv and bank.
+]]
+
 local GetContainerItemInfo = _G.GetContainerItemInfo
 local GetContainerItemLink = _G.GetContainerItemLink
 local GetItemInfo = _G.GetItemInfo
@@ -41,48 +45,51 @@ local tonumber = _G.tonumber
 local ipairs = _G.ipairs
 local pairs = _G.pairs
 
--- Default grid look (columns, slot size, spacing, border, glow, "ask before autodelete")
+
 local DEFAULTS = {
     gridCols = 10, gridSlotSize = 30, gridSpacing = 4,
     gridBorderSize = 2, gridGlowAlpha = 0.35,
     gridProtDesat = 0.80, gridConfirmAutoDel = true,
     gridProtectedKeyAlpha = 0.2,
 }
--- Bag IDs we show: 0 = backpack, 1–4 = equipped bags, -2 = keyring (like default bag bar)
+
 local BAG_IDS         = { 0, 1, 2, 3, 4, -2 }
-local MAX_SLOTS       = 36   -- Max slots we ever show per bag (biggest bag size)
-local BACKPACK_SLOTS  = 16   -- Default backpack size (16 slots)
-local BAG_BAR_BTN_SZ  = 22   -- Size of each bag bar button (backpack, bag1..4, keyring)
+local MAX_SLOTS       = 36   
+local BACKPACK_SLOTS  = 16   
+local BAG_BAR_BTN_SZ  = 22   
 local BAG_BAR_GAP     = 3
 local BAG_BAR_PAD     = 6
 
--- Where the grid sits inside the GPH frame (below title/buttons, above bottom bar)
+
 local GPH_TOP_TO_GRID  = 93
 local GPH_BOTTOM_BAR   = 20
 local GPH_LEFT_MARGIN  = 12
 local GPH_RIGHT_MARGIN = 8
 
--- Inventory grid state (one grid for the main bags window)
+
 local gridContent, gphRef, eventFrame
 local bagFrames   = {}
 local slotButtons = {}
 local slotsReady  = false
 local bagBar, bagBarBtns = nil, {}
-local autoDelSlots = {}   -- Slots marked "will be destroyed" (red DEL overlay)
+local autoDelSlots = {}   
 
--- Bank grid: separate state so inventory and bank can both be in grid mode at once
-local BANK_BAG_IDS    = { -1, 5, 6, 7, 8, 9, 10, 11 }  -- Main bank (-1) + bank bag slots
+
+local lastSearchText = ""
+
+
+local BANK_BAG_IDS    = { -1, 5, 6, 7, 8, 9, 10, 11 }  
 local BANK_MAX_SLOTS  = 36
-local bankGridContent, bankGphRef, bankEventFrame
+local bankGridContent, bankGphRef, bankEventFrame, bankDeferFrame
 local bankBagFrames   = {}
 local bankSlotButtons = {}
 local bankSlotsReady  = false
 local bankBagBar, bankBagBarBtns = nil, {}
 local bankAutoDelSlots = {}
 
--- Ctrl+right-double-click on a grid slot: first click marks "DEL", second within 0.5s adds to autodelete list.
 
--- Popup when you confirm "add to autodelete" from the grid (same idea as the red X in list view, but for grid).
+
+
 StaticPopupDialogs["FUGAZIGRID_DESTROY_CONFIRM"] = StaticPopupDialogs["FUGAZIGRID_DESTROY_CONFIRM"] or {
     text = "Add %s to auto-destroy list? It will be deleted from your bags while marked.",
     button1 = "Add to list",
@@ -93,10 +100,11 @@ StaticPopupDialogs["FUGAZIGRID_DESTROY_CONFIRM"] = StaticPopupDialogs["FUGAZIGRI
     preferredIndex = 3,
 }
 
-----------------------------------------------------------------------
--- Settings: read options from saved DB or use defaults (columns, slot size, etc.)
-----------------------------------------------------------------------
---- Returns a grid setting (e.g. gridCols, gridSlotSize); uses your saved value or the default.
+
+
+
+
+--- Get grid setting from DB or default (slot size, cols, etc).
 local function S(key)
     local DB = _G.FugaziBAGSDB
     local v = (DB and DB[key] ~= nil) and DB[key] or DEFAULTS[key]
@@ -104,7 +112,8 @@ local function S(key)
     return v
 end
 
---- How many slots this bag has (backpack = 16, keyring only if shown; other bags from WoW).
+
+--- Number of slots in bag (keyring -2 handled).
 local function NumSlots(bag)
     if bag == -2 then
         if not gphRef or not gphRef._keyringForcedShown then
@@ -125,7 +134,8 @@ local function NumSlots(bag)
     return 0
 end
 
---- How many slots this bank bag has (main bank = 28, same idea as the default bank UI).
+
+--- Number of slots in bank bag.
 local function BankNumSlots(bag)
     local n = GetContainerNumSlots and GetContainerNumSlots(bag)
     if n and n > 0 then return n end
@@ -133,7 +143,8 @@ local function BankNumSlots(bag)
     return 0
 end
 
---- Item quality (0=grey, 1=white, 2=green, 3=blue, 4=purple) for one slot — used for borders and filter.
+
+--- Get item quality (0–6) for bag slot.
 local function ItemQuality(bag, slot)
     local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
     if not link then return nil end
@@ -141,7 +152,8 @@ local function ItemQuality(bag, slot)
     return q
 end
 
---- Returns red, green, blue for a quality level so we can draw coloured borders (green/blue/purple).
+
+--- Rarity color (r,g,b) for quality (grey=0.5, green=0.2,1,0.2, …).
 local function QualityRGB(q)
     if not q then return nil end
     local A = _G.TestAddon
@@ -156,7 +168,8 @@ local function QualityRGB(q)
     return nil
 end
 
---- True if this slot is protected (Alt+click lock, rarity protect, or "previously worn") — won't show autodelete.
+
+--- Is slot protected (soulbound-to-vendor)? Uses main addon API.
 local function IsItemProtected(bag, slot)
     local Addon = _G.TestAddon
     if not Addon then return false end
@@ -164,32 +177,24 @@ local function IsItemProtected(bag, slot)
     if not link then return false end
     local itemId = tonumber(link:match("item:(%d+)"))
     if not itemId then return false end
-    -- Manual protect always wins
-    local protectedSet = Addon.GetGphProtectedSet and Addon.GetGphProtectedSet() or {}
-    if protectedSet[itemId] then return true end
-    -- Check if manually unprotected (Alt+LMB override)
-    local SV = _G.FugaziBAGSDB
-    if SV and SV._manualUnprotected and SV._manualUnprotected[itemId] then return false end
-    -- Rarity-wide protection
-    local rarityFlags = Addon.GetGphProtectedRarityFlags and Addon.GetGphProtectedRarityFlags() or {}
     local _, _, q = GetItemInfo(link)
-    if q and rarityFlags[q] then return true end
-    -- Previously worn
-    if Addon.GetGphPreviouslyWornOnlySet then
-        local prevOnly = Addon.GetGphPreviouslyWornOnlySet()
-        if prevOnly and prevOnly[itemId] then return true end
+    q = q or 0
+    if Addon.IsItemProtectedAPI then
+        return Addon.IsItemProtectedAPI(itemId, q)
     end
     return false
 end
 
---- Unique key for one bag+slot (used to track which slots are marked for autodelete in the grid).
+
+--- Unique key for bag+slot (for tables).
 local function SlotKey(bag, slot) return bag * 100 + slot end
 
 
 
---- Updates one grid slot: icon, count, cooldown, lock overlay, rarity border, protected overlay, DEL overlay.
--- "match" = false dims the slot when search/rarity filter doesn't match (like greying out filtered items).
--- searchMatch = true when this slot matches the active search text (used to add a soft highlight).
+
+
+
+--- Refresh one grid slot: icon, count, border, protected/destroy state.
 local function RefreshSlot(bag, slot, match, searchMatch)
     local btn = slotButtons[bag] and slotButtons[bag][slot]
     if not btn then return end
@@ -201,7 +206,7 @@ local function RefreshSlot(bag, slot, match, searchMatch)
     SetItemButtonDesaturated(btn, locked or not match or (q == 0))
     btn:SetAlpha(match and 1 or 0.2)
 
-    -- Search highlight: when a search is active and this slot matches, add a soft glow.
+    
     if btn.searchHighlight then
         if searchMatch then
             btn.searchHighlight:Show()
@@ -212,7 +217,7 @@ local function RefreshSlot(bag, slot, match, searchMatch)
 
     local skin = (_G.FugaziBAGSDB and _G.FugaziBAGSDB.gphSkin) or "original"
     if skin == "original" then
-        -- Original skin: satchel-of-Cenarius style background for slots
+        
         btn.slotBg:SetTexture("Interface\\Icons\\inv_misc_bag_satchelofcenarius")
         if bag == -2 then
             btn.slotBg:SetVertexColor(0.45, 0.52, 0.52, 0.10)
@@ -220,16 +225,16 @@ local function RefreshSlot(bag, slot, match, searchMatch)
             btn.slotBg:SetVertexColor(0.50, 0.50, 0.55, 0.10)
         end
     elseif skin == "elvui" or skin == "elvui_real" or skin == "pimp_purple" then
-        -- ElvUI Ebonhold + Pimp Purple: flat, glassy squares that match the frame.
+        
         btn.slotBg:SetTexture("Interface\\Tooltips\\UI-Tooltip-Background")
         if skin == "pimp_purple" then
             btn.slotBg:SetVertexColor(0.20, 0.02, 0.32, 0.85)
         else
-            -- ElvUI Ebonhold: dark glassy grey/teal, similar to mainBg.
+            
             btn.slotBg:SetVertexColor(0.06, 0.08, 0.09, 0.90)
         end
     else
-        -- Other skins (ElvUI real, etc.): use a subtle standard quickslot-style backdrop.
+        
         btn.slotBg:SetTexture("Interface\\Buttons\\UI-Quickslot2")
         btn.slotBg:SetVertexColor(1, 1, 1, 0.25)
     end
@@ -279,7 +284,7 @@ local function RefreshSlot(bag, slot, match, searchMatch)
         end
     end
 
-    -- Show shield icon for previously-worn items
+    
     if btn.wornIcon then
         local Addon = _G.TestAddon
         if tex and Addon and Addon.GetGphPreviouslyWornOnlySet then
@@ -324,16 +329,24 @@ local function RefreshSlot(bag, slot, match, searchMatch)
     end
 end
 
---- True if the item in this slot matches the search text (name contains the string; used to dim non-matches).
+
+--- Does slot match current search text?
 local function SearchMatch(bag, slot, q)
     if not q or q == "" then return true end
     local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
     if not link then return false end
+    local Addon = _G.TestAddon
+    if Addon and Addon.ItemMatchesSearch then
+        local ok, result = pcall(Addon.ItemMatchesSearch, link, bag, slot, q)
+        if ok then return result end
+        
+    end
     local name = GetItemInfo and GetItemInfo(link)
     return name and name:lower():find(q, 1, true) ~= nil
 end
 
---- True if the slot's item quality matches the current rarity filter (e.g. "show only blue").
+
+--- Does slot match quality filter (e.g. show only grey)?
 local function RarityMatch(bag, slot, filterQ)
     if filterQ == nil then return true end
     local q = ItemQuality(bag, slot)
@@ -343,11 +356,13 @@ local function RarityMatch(bag, slot, filterQ)
     return false
 end
 
---- Refreshes every visible slot (icon, count, cooldown, borders, search/rarity dimming) — call after bag update or filter change.
+
+--- Refresh all inventory grid slots (after bag update).
 local function RefreshAllSlots()
     local searchQ
-    if gphRef and gphRef.gphSearchText and gphRef.gphSearchText ~= "" then
-        searchQ = gphRef.gphSearchText:match("^%s*(.-)%s*$"):lower()
+    local src = (gphRef and gphRef.gphSearchText and gphRef.gphSearchText ~= "") and gphRef.gphSearchText or (lastSearchText and lastSearchText ~= "" and lastSearchText)
+    if src then
+        searchQ = src:match("^%s*(.-)%s*$"):lower()
     end
     local filterQ = gphRef and gphRef.gphFilterQuality
     for _, bag in ipairs(BAG_IDS) do
@@ -367,7 +382,44 @@ local function RefreshAllSlots()
     end
 end
 
---- Removes Blizzard's default slot textures (normal/pushed/highlight) so our grid looks clean and consistent.
+
+do
+    local timeoutFrame = CreateFrame("Frame")
+    timeoutFrame._accum = 0
+    timeoutFrame:SetScript("OnUpdate", function(self, elapsed)
+        self._accum = (self._accum or 0) + elapsed
+        if self._accum < 0.2 then return end  
+        self._accum = 0
+        local Addon = _G.TestAddon
+        local clicks = Addon and Addon.gphGridDestroyClickTime
+        if not clicks or not next(clicks) then return end
+        local now = (GetTime and GetTime()) or (time and time()) or 0
+        local anyCleared = false
+        for itemId, t in pairs(clicks) do
+            if (now - (t or 0)) > 1.0 then
+                clicks[itemId] = nil
+                anyCleared = true
+                
+                for _, bag in ipairs(BAG_IDS) do
+                    local n = NumSlots(bag)
+                    for slot = 1, n do
+                        local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
+                        local id = link and tonumber(link:match("item:(%d+)"))
+                        if id == itemId then
+                            autoDelSlots[SlotKey(bag, slot)] = nil
+                        end
+                    end
+                end
+            end
+        end
+        if anyCleared then
+            RefreshAllSlots()
+        end
+    end)
+end
+
+
+--- Remove overlay textures from slot (clean for reuse).
 local function StripSlotTextures(btn)
     local nt = btn:GetNormalTexture()
     if nt then nt:SetTexture(nil) end
@@ -379,7 +431,8 @@ local function StripSlotTextures(btn)
     end
 end
 
---- Picks up the item and deletes it (for autodelete list); does nothing if the slot is protected.
+
+--- Run auto-delete on slot if on destroy list.
 local function DoAutoDelete(bag, slot)
     local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
     if not link then return end
@@ -388,7 +441,8 @@ local function DoAutoDelete(bag, slot)
     if CursorHasItem and CursorHasItem() then DeleteCursorItem() end
 end
 
---- Handles Alt and Ctrl clicks on a grid slot: Alt+LMB = protect/unprotect; Ctrl+LMB = clear DEL; Ctrl+RMB double-click = add to autodelete list.
+
+--- Grid slot: Alt=protect, Ctrl+RMB=add to destroy list (double to confirm).
 local function HandleModifierClick(btn, button, bag, slot, altDown, ctrlDown)
     local link = GetContainerItemLink and GetContainerItemLink(bag, slot)
     if not link then return end
@@ -397,39 +451,48 @@ local function HandleModifierClick(btn, button, bag, slot, altDown, ctrlDown)
     local Addon = _G.TestAddon
 
     if altDown and button == "LeftButton" then
-        if not (Addon and Addon.GetGphProtectedSet) then return end
-        local set = Addon.GetGphProtectedSet()
-        if not set then return end
-        if set[itemId] then
-            -- Unprotect: remove from manual protect + clear previously-worn so manual choice wins
-            set[itemId] = nil
-            local SV = _G.FugaziBAGSDB
-            if SV and SV.gphPreviouslyWornItemIds then
-                SV.gphPreviouslyWornItemIds[itemId] = nil
-            end
-            -- Mark as manually unprotected so rarity-wide protection doesn't re-apply
-            if not SV._manualUnprotected then SV._manualUnprotected = {} end
+        if not Addon then return end
+
+        local _, _, q = GetItemInfo(itemId)
+        q = q or 0
+        local protNow = Addon.IsItemProtectedAPI and Addon.IsItemProtectedAPI(itemId, q) or false
+
+        local SV = _G.FugaziBAGSDB or {}
+        SV._manualUnprotected = SV._manualUnprotected or {}
+        local set = Addon.GetGphProtectedSet and Addon.GetGphProtectedSet() or {}
+        local prevOnly = Addon.GetGphPreviouslyWornOnlySet and Addon.GetGphPreviouslyWornOnlySet() or {}
+
+        
+        set[itemId] = nil
+        prevOnly[itemId] = nil
+        if SV.gphPreviouslyWornItemIds then SV.gphPreviouslyWornItemIds[itemId] = nil end
+
+        if protNow then
+            
             SV._manualUnprotected[itemId] = true
         else
-            -- Protect: manual override always wins
+            
+            SV._manualUnprotected[itemId] = nil
             set[itemId] = true
-            local SV = _G.FugaziBAGSDB
-            if SV and SV._manualUnprotected then SV._manualUnprotected[itemId] = nil end
         end
-        RefreshAllSlots()
 
-    elseif ctrlDown and button == "LeftButton" then
-        if Addon and Addon.gphGridDestroyClickTime then
-            Addon.gphGridDestroyClickTime[itemId] = nil
+        
+        RefreshAllSlots()
+        if _G.RefreshGPHUI then
+            local inv = _G.TestGPHFrame or _G.FugaziBAGS_GPHFrame
+            if inv then inv._refreshImmediate = true end
+            _G.RefreshGPHUI()
         end
-        local list = Addon and Addon.GetGphDestroyList and Addon.GetGphDestroyList() or {}
-        if not list[itemId] then
-            local key = SlotKey(bag, slot)
-            autoDelSlots[key] = nil
-            RefreshAllSlots()
+        
+        if (bag == -1 or (bag >= 5 and bag <= 11)) and _G.FugaziBAGS_ScheduleRefreshBankUI then
+            _G.FugaziBAGS_ScheduleRefreshBankUI()
         end
 
     elseif ctrlDown and button == "RightButton" then
+        
+        if bag == -1 or (bag >= 5 and bag <= 11) then return end
+        
+        if itemId == 6948 then return end
         if IsItemProtected and IsItemProtected(bag, slot) then return end
         if not (Addon and Addon.GetGphDestroyList) then return end
         local list = Addon.GetGphDestroyList()
@@ -445,7 +508,7 @@ local function HandleModifierClick(btn, button, bag, slot, altDown, ctrlDown)
         autoDelSlots[key] = true
         RefreshAllSlots()
 
-        if prev and (now - prev) <= 0.5 then
+        if prev and (now - prev) <= 1.0 then
             clicks[itemId] = nil
             if Addon and Addon.PlayTrashSound then Addon.PlayTrashSound() end
             local function addAndQueue()
@@ -454,6 +517,7 @@ local function HandleModifierClick(btn, button, bag, slot, altDown, ctrlDown)
                 list[itemId] = {
                     name = name or ("Item "..tostring(itemId)),
                     texture = texture,
+                    addedTime = time(),
                 }
                 if Addon.QueueDestroySlotsForItemId then
                     Addon.QueueDestroySlotsForItemId(itemId)
@@ -477,14 +541,15 @@ local function HandleModifierClick(btn, button, bag, slot, altDown, ctrlDown)
     end
 end
 
---- Creates one grid slot button (icon, count, cooldown, rarity border, lock overlay, DEL overlay). Uses Blizzard's ContainerFrameItemButtonTemplate so use/drag works in combat.
+
+--- Create one grid slot button (icon, count, cooldown, click).
 local function MakeSlot(bag, slot, parent)
     local bname = (bag == -2) and "K" or tostring(bag)
     local name = ("FugaziGrid_B%s_S%d"):format(bname, slot)
-    -- ContainerFrameItemButtonTemplate provides a secure execution path for
-    -- UseContainerItem / PickupContainerItem (required on 3.3.5a servers).
-    -- Show/Hide of the parent frame in combat is handled by a SecureHandler
-    -- keybind so protected children are not a problem.
+    
+    
+    
+    
     local btn, templateOk
     local ok = pcall(function()
         btn = CreateFrame("Button", name, parent, "ContainerFrameItemButtonTemplate")
@@ -515,7 +580,7 @@ local function MakeSlot(bag, slot, parent)
     bg:SetVertexColor(0.5, 0.5, 0.55, 0.1)
     btn.slotBg = bg
 
-    -- Coloured rarity border: four textures (top/bottom/left/right) so we can tint them directly like ElvUI does.
+    
     local rb  = {}
     local bsz = S("gridBorderSize")
     local top = btn:CreateTexture(nil, "OVERLAY", nil, 1)
@@ -537,7 +602,7 @@ local function MakeSlot(bag, slot, parent)
     po:SetTexture(0, 0, 0, S("gridProtDesat")); po:Hide()
     btn.protOverlay = po
 
-    -- Shield icon for previously-worn items
+    
     local wornIcon = btn:CreateTexture(nil, "OVERLAY", nil, 5)
     wornIcon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -1, 1)
     wornIcon:SetSize(12, 12)
@@ -546,7 +611,7 @@ local function MakeSlot(bag, slot, parent)
     wornIcon:Hide()
     btn.wornIcon = wornIcon
 
-    -- Key overlay for protected items: covers whole slot; shadow (0.15, desat) normally; at vendor 0.75 full color.
+    
     local protectedKeyIcon = btn:CreateTexture(nil, "OVERLAY", nil, 5)
     protectedKeyIcon:SetAllPoints(btn)
     protectedKeyIcon:SetTexture("Interface\\Icons\\INV_Misc_Key_13")
@@ -559,7 +624,7 @@ local function MakeSlot(bag, slot, parent)
     adOv:SetTexture(0.7, 0.1, 0.1, 0.6); adOv:Hide()
     btn.autoDelOverlay = adOv
 
-    -- Soft highlight used for search matches (independent of bag highlight).
+    
     local sh = btn:CreateTexture(nil, "OVERLAY", nil, 2)
     sh:SetAllPoints()
     sh:SetTexture(1, 1, 1, 0.20)
@@ -576,12 +641,12 @@ local function MakeSlot(bag, slot, parent)
     hl:SetAllPoints(); hl:SetTexture(1, 1, 1, 0.2); hl:SetBlendMode("ADD"); hl:Hide()
     btn.bagHighlight = hl
 
-    -- Let Blizzard's template handle clicks (secure path for UseContainerItem).
+    
     if templateOk and ContainerFrameItemButton_OnLoad then
         ContainerFrameItemButton_OnLoad(btn)
     end
 
-    -- At vendor, block right-click sell on protected items until user unprotects (Alt+click or unprotect rarity).
+    
     local vendorProtectOverlay = CreateFrame("Button", nil, btn)
     vendorProtectOverlay:SetAllPoints(btn)
     vendorProtectOverlay:SetFrameLevel((btn:GetFrameLevel() or 1) + 5)
@@ -591,20 +656,23 @@ local function MakeSlot(bag, slot, parent)
     vendorProtectOverlay:Hide()
     btn._vendorProtectOverlay = vendorProtectOverlay
 
-    -- Modifier hook runs AFTER Blizzard's secure OnClick, so normal use/drag (including Shift+RMB socket/split) stays default.
-    btn:HookScript("OnClick", function(self, button)
+    
+        btn:HookScript("OnClick", function(self, button)
         local shiftDown = IsShiftKeyDown and IsShiftKeyDown()
         local altDown  = IsAltKeyDown and IsAltKeyDown()
         local ctrlDown = IsControlKeyDown and IsControlKeyDown()
 
         local b, s = self:GetParent():GetID(), self:GetID()
 
-        if not altDown and not ctrlDown then return end
+            if not altDown and not ctrlDown then return end
 
-        -- Alt/Ctrl rarity management (protect / add to destroy list, etc.)
-        HandleModifierClick(self, button, b, s, altDown, ctrlDown)
+            
+            
+            if not (ctrlDown and button == "LeftButton") then
+                HandleModifierClick(self, button, b, s, altDown, ctrlDown)
+            end
 
-        -- Alt+LMB: Blizzard already picked up the item; put it back so Alt+click doesn't move it.
+        
         if altDown and button == "LeftButton" then
             if ClearCursor then ClearCursor() end
             PickupContainerItem(b, s)
@@ -663,7 +731,8 @@ local function MakeSlot(bag, slot, parent)
     return btn
 end
 
---- Creates all bag frames and slot buttons once (backpack + bags 1–4 + keyring); idempotent.
+
+--- Create all inventory grid slots (or reuse); layout on next frame.
 local function EnsureSlots()
     if slotsReady or not gridContent then return end
     slotsReady = true
@@ -675,7 +744,7 @@ local function EnsureSlots()
         slotButtons[bag] = {}
         for s = 1, MAX_SLOTS do slotButtons[bag][s] = MakeSlot(bag, s, bf) end
     end
-    -- Single OnUpdate: set rotation on center-pinned flare (smooth slow spin).
+    
     if not flareAnimFrame then
         flareAnimFrame = CreateFrame("Frame", nil, UIParent)
         local SPEED = 0.45
@@ -707,9 +776,10 @@ local function EnsureSlots()
     end
 end
 
----------------------------------------------------------------------------
--- bag bar: real bag equipment slots + keyring
----------------------------------------------------------------------------
+
+
+
+--- Clear highlight from all bag bar buttons.
 local function ClearAllBagHighlights()
     for _, bag in ipairs(BAG_IDS) do
         if slotButtons[bag] then
@@ -720,7 +790,8 @@ local function ClearAllBagHighlights()
     end
 end
 
---- Highlights all visible slots for one bag (when you hover that bag's button in the bag bar).
+
+--- Highlight one bag bar button (filter by bag).
 local function HighlightBag(bagID)
     ClearAllBagHighlights()
     if slotButtons[bagID] then
@@ -730,6 +801,7 @@ local function HighlightBag(bagID)
     end
 end
 
+--- Refresh bag bar (which bags shown, highlight).
 local function RefreshBagBar()
     if not bagBar then return end
     for _, bb in ipairs(bagBarBtns) do
@@ -747,10 +819,10 @@ local function RefreshBagBar()
         else
             local invID = ContainerIDToInventoryID and ContainerIDToInventoryID(bb.bagID)
             local tex = invID and GetInventoryItemTexture and GetInventoryItemTexture("player", invID)
-            -- Apply empty slot icon suitable for bag or bank slot
+            
             if not tex then
                 if isBank then
-                    tex = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag" -- bank empty Bag slot
+                    tex = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag" 
                 else
                     tex = "Interface\\PaperDoll\\UI-PaperDoll-Slot-Bag"
                 end
@@ -760,7 +832,8 @@ local function RefreshBagBar()
     end
 end
 
---- Creates the row of bag buttons (backpack, bag 1–4, keyring) below the grid; click = highlight bag or keyring / buy bank slot.
+
+--- Create bag bar (backpack + bag 1–4 buttons).
 local function CreateBagBar(parent)
     if bagBar then return bagBar end
     bagBar = CreateFrame("Frame", "FugaziGrid_"..(isBank and "Bank" or "").."BagBar", parent)
@@ -839,7 +912,8 @@ local function CreateBagBar(parent)
     return bagBar
 end
 
---- Positions every slot in a rows×columns grid and resizes the GPH frame to fit (like arranging default bag slots in a rectangle).
+
+--- Layout inventory grid (cols, slot size, position slots).
 local function LayoutGrid()
     if not gridContent or not gphRef then return end
     local cols    = S("gridCols")
@@ -871,7 +945,10 @@ local function LayoutGrid()
     local frameH = GPH_TOP_TO_GRID + contentH + bbH + 6 + GPH_BOTTOM_BAR
     gphRef.gphGridFrameW = frameW
     gphRef.gphGridFrameH = frameH
-    gphRef:SetSize(frameW, frameH)
+    
+    if not (InCombatLockdown and InCombatLockdown()) then
+        gphRef:SetSize(frameW, frameH)
+    end
     gphRef._gridNeedsHeaderRefresh = true
 
     local idx = 0
@@ -897,9 +974,10 @@ local function LayoutGrid()
     RefreshAllSlots()
 end
 
----------------------------------------------------------------------------
--- bag bar toggle
----------------------------------------------------------------------------
+
+
+
+--- Show/hide bag bar.
 local function ToggleBagBar()
     if not gridContent or not gphRef then return end
     if not bagBar then CreateBagBar(gridContent) end
@@ -907,7 +985,8 @@ local function ToggleBagBar()
     LayoutGrid()
 end
 
---- Returns the width and height the frame would need to fit the grid (for the main addon to size the window).
+
+--- Compute frame size for grid (from cols, rows, margins).
 local function ComputeFrameSize(isBank)
     local cols    = S("gridCols")
     local size    = S("gridSlotSize")
@@ -930,10 +1009,11 @@ local function ComputeFrameSize(isBank)
     return frameW, frameH
 end
 
-----------------------------------------------------------------------
--- Public API: what FugaziBAGS.lua calls to show/hide grid mode
-----------------------------------------------------------------------
---- Shows the grid inside the inventory window (replaces list view); registers BAG_UPDATE and sets up layout. Called when you enter combat or toggle to grid.
+
+
+
+
+--- Show grid in inventory frame (replace list view).
 local function ShowInFrame(f)
     if not f then return end
     if not f.gphHeader and not f._isBankFrame then return end
@@ -976,7 +1056,8 @@ local function ShowInFrame(f)
     gridContent:Show(); LayoutGrid()
 end
 
---- Current character's "force grid" setting (must match main addon's per-char storage so list view shows correctly).
+
+--- Per-char "force grid" setting (from DB).
 local function GetPerCharForceGrid()
     local SV = _G.FugaziBAGSDB
     if not SV then return false end
@@ -990,25 +1071,9 @@ local function GetPerCharForceGrid()
     return v
 end
 
---- Hides the grid. In combat (or "force grid" for this char): just hide grid content; out of combat: switch back to list view and show the scroll list.
+
+--- Hide grid in frame (back to list view).
 local function HideInFrame(f)
-    local inCombat = InCombatLockdown and InCombatLockdown()
-    local container = _G.FugaziBAGS_InventoryContainer
-    local DB = _G.FugaziBAGSDB or {}
-    local forceGrid = GetPerCharForceGrid()
-
-    -- In combat (or forceGrid for this char), only tear down grid visuals.
-    -- Do NOT switch to list-view layout — the next open will re-show the grid.
-    if inCombat or forceGrid then
-        if gridContent then gridContent:Hide() end
-        if bagBar then bagBar:Hide() end
-        table.wipe(autoDelSlots)
-        -- Keep gphGridMode = true so reopen path goes straight to grid.
-        gphRef = nil
-        return
-    end
-
-    -- Out of combat, full teardown: switch back to list-view layout.
     if gridContent then gridContent:Hide() end
     if bagBar then bagBar:Hide() end
     table.wipe(autoDelSlots)
@@ -1024,11 +1089,12 @@ local function HideInFrame(f)
     gphRef = nil
 end
 
-----------------------------------------------------------------------
--- Bank grid: same idea as inventory grid but for the bank window (separate slots/state so both can be open)
-----------------------------------------------------------------------
 
---- Creates all bank bag frames and slot buttons once (main bank + bank bags); idempotent.
+
+
+
+
+--- Create all bank grid slots (or reuse).
 local function BankEnsureSlots()
     if bankSlotsReady or not bankGridContent then return end
     bankSlotsReady = true
@@ -1041,8 +1107,9 @@ local function BankEnsureSlots()
     end
 end
 
---- Same as RefreshSlot but for a bank grid slot (icon, count, cooldown, borders, protection).
--- searchMatch = true when this slot matches the active search text (for highlight).
+
+
+--- Refresh one bank grid slot.
 local function BankRefreshSlot(bag, slot, match, searchMatch)
     local btn = bankSlotButtons[bag] and bankSlotButtons[bag][slot]
     if not btn then return end
@@ -1064,11 +1131,11 @@ local function BankRefreshSlot(bag, slot, match, searchMatch)
     
     local skin = (_G.FugaziBAGSDB and _G.FugaziBAGSDB.gphSkin) or "original"
     if skin == "original" then
-        -- Original skin: satchel-of-Cenarius look for bank grid slots
+        
         btn.slotBg:SetTexture("Interface\\Icons\\inv_misc_bag_satchelofcenarius")
         btn.slotBg:SetVertexColor(0.5, 0.5, 0.55, 0.1)
     elseif skin == "elvui" or skin == "elvui_real" or skin == "pimp_purple" then
-        -- ElvUI Ebonhold + Pimp Purple: same glassy squares as inventory grid.
+        
         btn.slotBg:SetTexture("Interface\\Tooltips\\UI-Tooltip-Background")
         if skin == "pimp_purple" then
             btn.slotBg:SetVertexColor(0.20, 0.02, 0.32, 0.85)
@@ -1076,7 +1143,7 @@ local function BankRefreshSlot(bag, slot, match, searchMatch)
             btn.slotBg:SetVertexColor(0.06, 0.08, 0.09, 0.90)
         end
     else
-        -- Other skins: standard quickslot-style background.
+        
         btn.slotBg:SetTexture("Interface\\Buttons\\UI-Quickslot2")
         btn.slotBg:SetVertexColor(1, 1, 1, 0.25)
     end
@@ -1142,11 +1209,13 @@ local function BankRefreshSlot(bag, slot, match, searchMatch)
     end
 end
 
---- Refreshes every bank grid slot (search/rarity filter applied from bank frame if set).
+
+--- Refresh all bank grid slots.
 local function BankRefreshAllSlots()
     local searchQ
-    if bankGphRef and bankGphRef.gphSearchText and bankGphRef.gphSearchText ~= "" then
-        searchQ = bankGphRef.gphSearchText:match("^%s*(.-)%s*$"):lower()
+    local searchSrc = (bankGphRef and bankGphRef.gphSearchText and bankGphRef.gphSearchText ~= "") and bankGphRef.gphSearchText or (gphRef and gphRef.gphSearchText and gphRef.gphSearchText ~= "") and gphRef.gphSearchText or (lastSearchText and lastSearchText ~= "" and lastSearchText)
+    if searchSrc then
+        searchQ = searchSrc:match("^%s*(.-)%s*$"):lower()
     end
     local filterQ = bankGphRef and bankGphRef.gphFilterQuality
     for _, bag in ipairs(BANK_BAG_IDS) do
@@ -1166,7 +1235,8 @@ local function BankRefreshAllSlots()
     end
 end
 
---- Positions every bank slot in a rows×columns grid and resizes the bank frame to fit.
+
+--- Layout bank grid (cols, slot size).
 local function BankLayoutGrid()
     if not bankGridContent or not bankGphRef then return end
     local cols    = S("gridCols")
@@ -1189,7 +1259,9 @@ local function BankLayoutGrid()
     local frameH = GPH_TOP_TO_GRID + contentH + 6 + GPH_BOTTOM_BAR
     bankGphRef.gphGridFrameW = frameW
     bankGphRef.gphGridFrameH = frameH
-    bankGphRef:SetSize(frameW, frameH)
+    if not (InCombatLockdown and InCombatLockdown()) then
+        bankGphRef:SetSize(frameW, frameH)
+    end
 
     local idx = 0
     for _, bag in ipairs(BANK_BAG_IDS) do
@@ -1214,7 +1286,8 @@ local function BankLayoutGrid()
     BankRefreshAllSlots()
 end
 
---- Shows the grid inside the bank window (replaces bank list); same idea as ShowInFrame but for the bank.
+
+--- Show grid in bank frame (replace bank list).
 local function ShowInBankFrame(f)
     if not f then return end
     bankGphRef = f
@@ -1228,7 +1301,7 @@ local function ShowInBankFrame(f)
         bankGridContent:SetParent(f)
         bankGridContent:ClearAllPoints()
     end
-    -- Position below the bank title bar area
+    
     bankGridContent:SetPoint("TOPLEFT", f, "TOPLEFT", GPH_LEFT_MARGIN, -GPH_TOP_TO_GRID)
     if not bankEventFrame then
         bankEventFrame = CreateFrame("Frame")
@@ -1236,14 +1309,14 @@ local function ShowInBankFrame(f)
         bankEventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
         bankEventFrame:RegisterEvent("PLAYERBANKBAGSLOTS_CHANGED")
         
-        local bankDeferFrame = CreateFrame("Frame"); bankDeferFrame:Hide()
+        bankDeferFrame = CreateFrame("Frame"); bankDeferFrame:Hide()
         bankDeferFrame:SetScript("OnUpdate", function(self)
             self:Hide()
             if bankGridContent and bankGridContent:IsShown() then BankRefreshAllSlots() end
         end)
 
         bankEventFrame:SetScript("OnEvent", function()
-            if bankGridContent and bankGridContent:IsShown() then
+            if bankGridContent and bankGridContent:IsShown() and bankDeferFrame then
                 bankDeferFrame:Show()
             end
         end)
@@ -1254,7 +1327,8 @@ local function ShowInBankFrame(f)
     bankGridContent:Show(); BankLayoutGrid()
 end
 
---- Hides the bank grid and shows the bank list view again.
+
+--- Hide grid in bank frame (back to list).
 local function HideInBankFrame(f)
     if bankGridContent then bankGridContent:Hide() end
     if f then
@@ -1266,13 +1340,14 @@ local function HideInBankFrame(f)
     bankGphRef = nil
 end
 
-    -- Table the main addon uses: ShowInFrame/HideInFrame for inventory grid, ShowInBankFrame/HideInBankFrame for bank, LayoutGrid, ApplySearch, etc.
+    
 _G.FugaziBAGS_CombatGrid = {
     ShowInFrame      = ShowInFrame,
     HideInFrame      = HideInFrame,
     ShowInBankFrame  = ShowInBankFrame,
     HideInBankFrame  = HideInBankFrame,
     ApplySearch      = function(t)
+        lastSearchText = (t and t ~= "" and t:match("^%s*(.-)%s*$")) or ""
         if gphRef then gphRef.gphSearchText = t end
         if bankGphRef then bankGphRef.gphSearchText = t end
         RefreshAllSlots()
@@ -1289,7 +1364,7 @@ _G.FugaziBAGS_CombatGrid = {
     IsBankShown      = function() return bankGridContent and bankGridContent:IsShown() end,
 }
 
--- On load: create the grid content frame and slot buttons so they're ready when you first open bags in grid mode.
+
 local init = CreateFrame("Frame")
 init:RegisterEvent("ADDON_LOADED")
 init:SetScript("OnEvent", function(_, _, addon)
