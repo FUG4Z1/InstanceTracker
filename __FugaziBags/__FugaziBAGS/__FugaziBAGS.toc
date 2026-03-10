@@ -2,7 +2,7 @@
 ## Title: |cff3ad1c8__FugaziBAGS|r
 ## Notes: Customizable inventory with Lootfilter. B opens inventory. Check Instructions in Escape Menu. ElvUI reskin.
 ## Author: Fugazi
-## Version: 2.0.1
+## Version: 2.0.2
 ## SavedVariables: FugaziBAGSDB, FugaziBAGS_AddonEnabled
 ## DefaultState: enabled
 ## LoadOnDemand: 0

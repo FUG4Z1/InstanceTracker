@@ -21,6 +21,10 @@ local GetContainerItemLink = _G.GetContainerItemLink
 local GetItemInfo = _G.GetItemInfo
 local GetContainerNumSlots = _G.GetContainerNumSlots
 local GetContainerItemCooldown = _G.GetContainerItemCooldown
+local GetNumBankSlots = _G.GetNumBankSlots
+local PurchaseSlot = _G.PurchaseSlot
+local MoneyFrame_Update = _G.MoneyFrame_Update
+local GetMoney = _G.GetMoney
 local tonumber = _G.tonumber
 local ipairs = _G.ipairs
 local pairs = _G.pairs
@@ -76,6 +80,46 @@ if DB.gphCategoryHeaderFontSize == nil then DB.gphCategoryHeaderFontSize = 11 en
 if DB.gphItemDetailsCustom == nil then DB.gphItemDetailsCustom = false end  
 if DB.gphHideIconsInList == nil then DB.gphHideIconsInList = false end  
 DB.gphPerChar = DB.gphPerChar or {}   
+
+local BANK_SLOT_COSTS = { 1000, 10000, 100000, 250000, 250000, 250000, 250000 }
+local function FB_GetPurchasedBankBags()
+	if not GetNumBankSlots then return 0 end
+	local num = GetNumBankSlots()
+	if type(num) ~= "number" then num = 0 end
+	if num < 0 then num = 0 end
+	if num > #BANK_SLOT_COSTS then num = #BANK_SLOT_COSTS end
+	return num
+end
+
+local function FB_GetNextBankSlotCost()
+	local purchased = FB_GetPurchasedBankBags()
+	if purchased >= #BANK_SLOT_COSTS then
+		return nil, true
+	end
+	return BANK_SLOT_COSTS[purchased + 1], false
+end
+
+if not StaticPopupDialogs["FUGAZI_BUY_BANK_SLOT"] then
+	StaticPopupDialogs["FUGAZI_BUY_BANK_SLOT"] = {
+		text = CONFIRM_BUY_BANK_SLOT,
+		button1 = YES,
+		button2 = NO,
+		OnAccept = function()
+			if PurchaseSlot then
+				PurchaseSlot()
+			end
+		end,
+		OnShow = function(self)
+			local cost = select(1, FB_GetNextBankSlotCost())
+			if self.moneyFrame and MoneyFrame_Update then
+				MoneyFrame_Update(self.moneyFrame, cost or 0)
+			end
+		end,
+		hasMoneyFrame = 1,
+		timeout = 0,
+		hideOnEscape = 1,
+	}
+end
 
 
 
@@ -3694,10 +3738,12 @@ local function CreateGPHFrame()
             info.notCheckable = true
             UIDropDownMenu_AddButton(info)
 
+            info = UIDropDownMenu_CreateInfo(); info.text = ""; info.isTitle = true; info.notCheckable = true; UIDropDownMenu_AddButton(info)
+
             info = UIDropDownMenu_CreateInfo()
-            info.text = "Instance Tracker"
+            info.text = "Clean up Inventory"
             info.func = function()
-                if SlashCmdList["INSTANCETRACKER"] then SlashCmdList["INSTANCETRACKER"]("") end
+                if GPH_BagSort_Run then GPH_BagSort_Run(RefreshGPHUI) end
                 CloseDropDownMenus()
             end
             info.notCheckable = true
@@ -3705,7 +3751,6 @@ local function CreateGPHFrame()
 
             info = UIDropDownMenu_CreateInfo(); info.text = ""; info.isTitle = true; info.notCheckable = true; UIDropDownMenu_AddButton(info)
 
-            
             if _G.gphSession then
                 info = UIDropDownMenu_CreateInfo()
                 info.text = "|cff00ff00Session Active|r"
@@ -3746,6 +3791,30 @@ local function CreateGPHFrame()
                 info.notCheckable = true
                 UIDropDownMenu_AddButton(info)
             end
+
+            info = UIDropDownMenu_CreateInfo(); info.text = ""; info.isTitle = true; info.notCheckable = true; UIDropDownMenu_AddButton(info)
+
+            info = UIDropDownMenu_CreateInfo()
+            info.text = "Instance Tracker"
+            info.func = function()
+                if SlashCmdList["INSTANCETRACKER"] then SlashCmdList["INSTANCETRACKER"]("") end
+                CloseDropDownMenus()
+            end
+            info.notCheckable = true
+            UIDropDownMenu_AddButton(info)
+
+            info = UIDropDownMenu_CreateInfo()
+            info.text = "Ledger"
+            info.func = function()
+                if SlashCmdList["INSTANCETRACKER_LEDGER"] then
+                    SlashCmdList["INSTANCETRACKER_LEDGER"]("")
+                elseif SlashCmdList["INSTANCETRACKER"] then
+                    SlashCmdList["INSTANCETRACKER"]("stats")
+                end
+                CloseDropDownMenus()
+            end
+            info.notCheckable = true
+            UIDropDownMenu_AddButton(info)
 
             info = UIDropDownMenu_CreateInfo(); info.text = ""; info.isTitle = true; info.notCheckable = true; UIDropDownMenu_AddButton(info)
 
@@ -3827,14 +3896,6 @@ local function CreateGPHFrame()
                 info.notCheckable = true
                 UIDropDownMenu_AddButton(info)
             end
-            info = UIDropDownMenu_CreateInfo()
-            info.text = "Clean up Inventory"
-            info.func = function()
-                if GPH_BagSort_Run then GPH_BagSort_Run(RefreshGPHUI) end
-                CloseDropDownMenus()
-            end
-            info.notCheckable = true
-            UIDropDownMenu_AddButton(info)
 
             
             local forceGrid = GetPerChar("gphForceGridView", false)
@@ -5436,11 +5497,18 @@ function CreateBankFrame(invFrame)
 		btn:SetScript("OnClick", function(self, button)
 			if Addon.PlayClickSound then Addon.PlayClickSound() end
 			local cursorType = GetCursorInfo and GetCursorInfo()
+			if (not cursorType or cursorType == "") and button == "LeftButton" then
+				local purchased = FB_GetPurchasedBankBags()
+				if i == purchased + 1 then
+					StaticPopup_Show("FUGAZI_BUY_BANK_SLOT")
+					return
+				end
+			end
+
 			if cursorType == "item" and PutItemInBag and ContainerIDToInventoryID and self.bagID then
 				local invID = ContainerIDToInventoryID(self.bagID)
 				if invID and invID > 0 then PutItemInBag(invID) end
 			elseif not cursorType or cursorType == "" then
-				
 				local invID = self.bagID and ContainerIDToInventoryID and ContainerIDToInventoryID(self.bagID)
 				if invID and invID > 0 and PickupInventoryItem then
 					PickupInventoryItem(invID)
@@ -5459,8 +5527,19 @@ function CreateBankFrame(invFrame)
 		end)
 		btn:SetScript("OnEnter", function(self)
 			local numSlots = GetContainerNumSlots and GetContainerNumSlots(self.bagID) or 0
+			local purchased = FB_GetPurchasedBankBags()
 			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			GameTooltip:SetText("Bank bag " .. i .. (numSlots > 0 and (" (" .. numSlots .. " slots)") or " (not purchased)"))
+			if i <= purchased then
+				GameTooltip:SetText("Bank bag " .. i .. " (" .. numSlots .. " slots)")
+			elseif i == purchased + 1 then
+				local cost = select(1, FB_GetNextBankSlotCost())
+				GameTooltip:SetText("Bank bag " .. i .. " (not purchased)")
+				if cost and cost > 0 and SetTooltipMoney then
+					SetTooltipMoney(GameTooltip, cost)
+				end
+			else
+				GameTooltip:SetText("Bank bag " .. i .. " (locked)")
+			end
 			GameTooltip:Show()
 		end)
 		btn:SetScript("OnLeave", function() GameTooltip:Hide() end)

@@ -398,6 +398,12 @@ function L.SaveFrameLayout(frame, shownKey, pointKey)
         if left and top then
             InstanceTrackerDB[pointKey] = { point = "TOPLEFT", relativePoint = "BOTTOMLEFT", x = left, y = top }
         end
+    elseif pointKey == "statsPoint" then
+        -- Always save Ledger in screen coords (origin bottom-left) so /ledger can open it alone in the right place.
+        local left, top = frame:GetLeft(), frame:GetTop()
+        if left and top then
+            InstanceTrackerDB[pointKey] = { point = "TOPLEFT", relativePoint = "BOTTOMLEFT", x = left, y = top }
+        end
     else
         local p, _, rp, x, y = frame:GetPoint(1)
         if p and rp and x and y then
@@ -8060,9 +8066,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if InstanceTrackerDB.statsShown then
             if not statsFrame then statsFrame = L.CreateStatsFrame() end
             statsFrame:ClearAllPoints()
-            statsFrame:SetWidth(frame:GetWidth())
-            statsFrame:SetHeight(frame:GetHeight())
-            statsFrame:SetPoint("TOPLEFT", frame, "TOPRIGHT", 4, 0)
+            local pt = InstanceTrackerDB.statsPoint
+            if pt and pt.point and pt.relativePoint and pt.x and pt.y then
+                statsFrame:SetPoint(pt.point, UIParent, pt.relativePoint, pt.x, pt.y)
+            else
+                statsFrame:SetWidth(frame:GetWidth())
+                statsFrame:SetHeight(frame:GetHeight())
+                statsFrame:SetPoint("TOPLEFT", frame, "TOPRIGHT", 4, 0)
+            end
             statsFrame:Show()
             RefreshStatsUI()
         end
@@ -8212,24 +8223,23 @@ SLASH_INSTANCETRACKER2 = "/fugazi"
 SLASH_FUGAZIGPH1 = "/gph"
 SLASH_INSTANCETRACKER_LEDGER1 = "/ledger"
 SlashCmdList["INSTANCETRACKER_LEDGER"] = function()
-    if not frame then
-        frame = CreateMainFrame()
-        frame:SetScript("OnHide", function() frame:SetScript("OnUpdate", nil) end)
-        frame:SetScript("OnShow", function() frame:SetScript("OnUpdate", OnUpdate) end)
-    end
-    if not frame:IsShown() then frame:Show(); L.SaveFrameLayout(frame, "frameShown", "framePoint") end
     if not statsFrame then statsFrame = L.CreateStatsFrame() end
-    statsFrame:ClearAllPoints()
-    statsFrame:SetWidth(frame:GetWidth())
-    statsFrame:SetHeight(frame:GetHeight())
-    statsFrame:SetPoint("TOPLEFT", frame, "TOPRIGHT", 4, 0)
-    if not statsFrame:IsShown() then
-        InstanceTrackerDB.statsCollapsed = InstanceTrackerDB.lockoutsCollapsed
-        if statsFrame.UpdateStatsCollapse then statsFrame.UpdateStatsCollapse() end
-        statsFrame:Show()
-        L.SaveFrameLayout(statsFrame, "statsShown", "statsPoint")
+    if statsFrame:IsShown() then
         RefreshStatsUI()
+        return
     end
+    statsFrame:ClearAllPoints()
+    local pt = InstanceTrackerDB.statsPoint
+    if pt and pt.point and pt.relativePoint and pt.x and pt.y then
+        statsFrame:SetPoint(pt.point, UIParent, pt.relativePoint, pt.x, pt.y)
+    else
+        statsFrame:SetPoint("TOP", UIParent, "CENTER", 0, 100)
+    end
+    InstanceTrackerDB.statsCollapsed = false
+    if statsFrame.UpdateStatsCollapse then statsFrame.UpdateStatsCollapse() end
+    statsFrame:Show()
+    L.SaveFrameLayout(statsFrame, "statsShown", "statsPoint")
+    RefreshStatsUI()
 end
 SlashCmdList["FUGAZIGPH"] = function()
     if _G.ToggleGPHFrame then _G.ToggleGPHFrame() end
